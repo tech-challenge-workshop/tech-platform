@@ -1,0 +1,109 @@
+_format_version: "3.0"
+_transform: true
+
+# Consumers ------------------------------------------------------------------
+# One consumer whose JWT credential matches the `iss` claim signed by
+# the auth-service. All tokens the Lambda emits are attributed to this
+# consumer; the actual authorization decision (admin vs customer, own OS
+# vs other's) still runs inside each Nest service via the Roles/JWT guards.
+
+consumers:
+  - username: auth-service
+    jwt_secrets:
+      - key: auth-service
+        algorithm: HS256
+        # dev-only literal — matches JWT_SECRET in the four services' .env.
+        # In production this comes from a Kubernetes Secret referenced by
+        # the KongConsumer/credential manifest.
+        secret: dev-secret-do-not-use-in-prod
+
+# Services & routes ----------------------------------------------------------
+# Each upstream service runs on the host; Kong reaches it via host.docker.internal.
+# strip_path is false everywhere so the app receives the original path.
+
+services:
+
+  - name: auth-service
+    url: http://host.docker.internal:3003
+    routes:
+      - name: auth-customer
+        methods: [POST]
+        paths: ["/auth"]
+        strip_path: false
+      - name: auth-admin
+        methods: [POST]
+        paths: ["/auth/admin"]
+        strip_path: false
+
+  - name: work-order-service
+    url: http://host.docker.internal:3000
+    routes:
+      - name: wo-customers-lookup
+        # public, service-to-service (used by the auth Lambda)
+        methods: [GET]
+        paths: ["/customers/lookup"]
+        strip_path: false
+      - name: wo-customers
+        methods: [GET, POST, PATCH, DELETE]
+        paths: ["/customers"]
+        strip_path: false
+        plugins:
+          - name: jwt
+      - name: wo-vehicles
+        methods: [GET, POST, PATCH, DELETE]
+        paths: ["/vehicles"]
+        strip_path: false
+        plugins:
+          - name: jwt
+      - name: wo-repair-services
+        methods: [GET, POST, PATCH, DELETE]
+        paths: ["/repair-services"]
+        strip_path: false
+        plugins:
+          - name: jwt
+      - name: wo-work-orders
+        methods: [GET, POST, PATCH, DELETE]
+        paths: ["/work-orders"]
+        strip_path: false
+        plugins:
+          - name: jwt
+
+  - name: execution-service
+    url: http://host.docker.internal:3002
+    routes:
+      - name: ex-parts-prices
+        # public, service-to-service (called by work-order on OS open)
+        methods: [GET]
+        paths: ["/parts/prices"]
+        strip_path: false
+      - name: ex-parts
+        methods: [GET, POST, PATCH, DELETE]
+        paths: ["/parts"]
+        strip_path: false
+        plugins:
+          - name: jwt
+      - name: ex-executions
+        methods: [GET, POST, PATCH, DELETE]
+        paths: ["/executions"]
+        strip_path: false
+        plugins:
+          - name: jwt
+
+  - name: billing-service
+    url: http://host.docker.internal:3001
+    routes:
+      - name: bi-quotes
+        methods: [GET, POST]
+        paths: ["/quotes"]
+        strip_path: false
+        plugins:
+          - name: jwt
+      - name: bi-payments
+        methods: [GET]
+        paths: ["/payments"]
+        strip_path: false
+        plugins:
+          - name: jwt
+
+# Cross-cutting plugins ------------------------------------------------------
+# Add per-route or global plugins here later (rate-limit, cors, prometheus…).

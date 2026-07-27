@@ -1,0 +1,50 @@
+name: tech-platform
+
+# Shared infra for local development across the tech-challenge services.
+# Assumes the four apps (work-order-service, execution-service, billing-service
+# and auth-service) run on the host via `pnpm start:dev` — Kong reaches them
+# through host.docker.internal (see extra_hosts).
+
+services:
+  kong:
+    image: kong:3.9
+    container_name: tech-platform-kong
+    restart: unless-stopped
+    environment:
+      KONG_DATABASE: "off"
+      KONG_DECLARATIVE_CONFIG: /kong/kong.yml
+      KONG_PROXY_ACCESS_LOG: /dev/stdout
+      KONG_ADMIN_ACCESS_LOG: /dev/stdout
+      KONG_PROXY_ERROR_LOG: /dev/stderr
+      KONG_ADMIN_ERROR_LOG: /dev/stderr
+      KONG_ADMIN_LISTEN: 0.0.0.0:8001
+      KONG_PROXY_LISTEN: 0.0.0.0:8000
+    ports:
+      - "8000:8000"   # proxy (public traffic goes here)
+      - "8001:8001"   # admin API (read-only inspection in dev)
+    volumes:
+      - ./kong:/kong:ro
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    healthcheck:
+      test: ["CMD", "kong", "health"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  datadog-agent:
+    image: registry.datadoghq.com/agent:7
+    container_name: tech-platform-datadog-agent
+    restart: unless-stopped
+    environment:
+      DD_API_KEY: ${DD_API_KEY:-}
+      DD_SITE: ${DD_SITE:-datadoghq.com}
+      DD_ENV: ${DD_ENV:-development}
+      DD_APM_ENABLED: "true"
+      DD_APM_NON_LOCAL_TRAFFIC: "true"
+      DD_HEALTH_METRICS_ENABLED: "true"
+    ports:
+      - "8126:8126"       # APM (traces)
+      - "8125:8125/udp"   # dogstatsd (metrics)
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
