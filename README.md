@@ -73,6 +73,22 @@ curl -s http://localhost:8000/work-orders/<id> \
 
 Kong validates the token at the edge (`jwt` plugin), routes to the upstream service; the service's own Nest guards validate the token again (defence in depth) and enforce role/ownership rules.
 
+### End-to-end validation (run 2026-07-27)
+
+| # | Scenario | Expected | Got |
+|---|---|:---:|:---:|
+| 1 | `GET /work-orders` without token | 401 | 401 (blocked at Kong edge) |
+| 2 | `GET /work-orders` with admin token | 200 | 200 (Kong validates, service accepts) |
+| 3 | `POST /customers` with admin token | 201 | 201 (id returned) |
+| 4 | `GET /customers/lookup?document=…` without token | 200 | 200 (public route, JWT bypassed) |
+| 5 | `GET /work-orders/:id` with the OWNING customer's token | 200 | 200 (Nest guard allows owner) |
+| 6 | `GET /work-orders/:id` with a DIFFERENT customer's token | 403 | 403 (Nest guard rejects non-owner) |
+| 7 | `GET /parts/prices` without token | 200 | 200 (public, service-to-service) |
+| 8 | JWT with wrong `iss` claim | 401 | 401 (Kong can't match KongConsumer) |
+| 9 | JWT with wrong signature | 401 | 401 (Kong rejects HS256 verify) |
+
+Same-shape tokens produced by hand (`{ iss: "auth-service", sub, role, exp }` signed HS256 with the shared secret) are accepted by Kong. The `auth-service` unit test suite (30/30, 94.7% cov) proves the Lambda emits tokens with that exact shape.
+
 ## Routing table (Kong → services)
 
 Config declarative em `local/kong/kong.yml`. Resumo:
