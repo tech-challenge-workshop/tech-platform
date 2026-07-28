@@ -17,7 +17,8 @@ Cross-cutting infrastructure for the Tech Challenge (Phase 4) — the pieces tha
 | [docs/](docs/) | Component and sequence diagrams, ER diagrams, ADRs, RFCs, vulnerability analysis |
 | [postman/](postman/) | Collection covering the whole flow through the gateway |
 | [DEPLOY.md](DEPLOY.md) | Building or rebuilding the environment |
-| [DEMO.md](DEMO.md) | Walking the system as a user, or recording the demo |
+| [DEMO.md](DEMO.md) | Walking the system as a user, with the place to observe each step |
+| [DEMO-RECORDING.md](DEMO-RECORDING.md) | Timed sequence for recording the demo video |
 
 ## Repositories in the ecosystem
 
