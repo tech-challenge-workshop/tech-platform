@@ -36,5 +36,4 @@ behind the service split.
 | Document | Use it when |
 | --- | --- |
 | [../DEPLOY.md](../DEPLOY.md) | Building or rebuilding the environment, or when a deploy fails |
-| [../DEMO.md](../DEMO.md) | Walking the system as a user, or recording the demo |
 | [../README.md](../README.md) | Local development and the routing table |

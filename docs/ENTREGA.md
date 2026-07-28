@@ -10,11 +10,10 @@ automatizado em Kubernetes na AWS.
 
 | Nome | RM | GitHub |
 | --- | --- | --- |
-| Leonardo Figueiredo | `[RM]` | [@figueiredoleo](https://github.com/figueiredoleo) |
-| `[NOME COMPLETO]` | `[RM]` | [@GabrielStima](https://github.com/GabrielStima) |
-| `[NOME COMPLETO]` | `[RM]` | [@mbfontana](https://github.com/mbfontana) |
-| `[NOME COMPLETO]` | `[RM]` | [@knzt](https://github.com/knzt) |
-| `[NOME COMPLETO]` | `[RM]` | [@Viiinny7](https://github.com/Viiinny7) |
+| Leonardo Rodrigues Figueiredo | RM368977 | [@figueiredoleo](https://github.com/figueiredoleo) |
+| Gabriel Rocha Stimamiglio | RM369366 | [@GabrielStima](https://github.com/GabrielStima) |
+| Matheus Begosso Fontana | RM368963 | [@mbfontana](https://github.com/mbfontana) |
+| Vinícius Luciano Navarrete Da Silva | RM369353 | [@Viiinny7](https://github.com/Viiinny7) |
 
 O usuário `soat-architecture` foi adicionado como colaborador nos cinco
 repositórios.
@@ -247,5 +246,7 @@ Passo a passo detalhado em [`DEPLOY.md`](../DEPLOY.md).
 infraestrutura, e o `tech-platform` sobe o Kong e o agente Datadog
 compartilhados. Instruções no [README](../README.md).
 
-**Percorrer o sistema como usuário**, com o ponto de observação de cada etapa:
-[`DEMO.md`](../DEMO.md).
+**Percorrer o sistema manualmente**: a [collection do Postman](../postman) cobre
+o fluxo completo pelo gateway — autenticação, catálogo, saga, compensação e o que
+a borda rejeita. Para uma verificação automática de ponta a ponta,
+[`scripts/smoke-test.sh`](../scripts/smoke-test.sh) roda 23 checagens.
