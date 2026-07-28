@@ -4,8 +4,9 @@ Cross-cutting infrastructure for the Tech Challenge (Phase 4) — the pieces tha
 
 | Directory | Purpose |
 |---|---|
-| `local/` | docker-compose that boots the API gateway (Kong) and the shared Datadog Agent for local development. Every dev in the team uses the same setup. |
-| `k8s/` | (upcoming) Helm values for the Kong Ingress Controller and manifest set (`HTTPRoute`, `KongPlugin`, `KongConsumer`) for the EKS environment. |
+| `local/` | docker-compose booting the API gateway (Kong) and the shared Datadog Agent for local development. Every dev on the team runs the same setup. |
+| `k8s/` | Kustomize manifest set for the four services plus the Kong Gateway API resources and Datadog Helm values. |
+| `terraform/` | OpenTofu stack provisioning the AWS platform: VPC, EKS, RDS, DocumentDB, Amazon MQ. |
 
 ## Repositories in the ecosystem
 
@@ -14,8 +15,8 @@ Cross-cutting infrastructure for the Tech Challenge (Phase 4) — the pieces tha
 | [`work-order-service`](https://github.com/tech-challenge-workshop/work-order-service) | Work-order lifecycle, master data (customers/vehicles/services), saga orchestrator. |
 | [`execution-service`](https://github.com/tech-challenge-workshop/execution-service) | Parts inventory + execution queue + diagnostics. |
 | [`billing-service`](https://github.com/tech-challenge-workshop/billing-service) | Quote + payment (Mercado Pago). |
-| [`auth-service`](https://github.com/tech-challenge-workshop/auth-service) | Serverless Framework Lambda that issues JWTs (CPF/CNPJ → customer; API key → admin). |
-| **`tech-platform`** (this repo) | Gateway (Kong) + observability + shared infra. |
+| [`auth-service`](https://github.com/tech-challenge-workshop/auth-service) | Issues JWTs (CPF/CNPJ → customer; API key → admin). |
+| **`tech-platform`** (this repo) | Gateway, observability, Kubernetes and AWS infrastructure. |
 
 ## Local development
 
@@ -30,7 +31,7 @@ docker compose up -d
 That gives you:
 
 - **Kong** on `http://localhost:8000` (proxy) and `http://localhost:8001` (admin, read-only inspection).
-- **Datadog Agent** on `localhost:8126` (APM/traces) and `localhost:8125/udp` (dogstatsd). Every service in the team points `DD_AGENT_HOST=localhost` at this shared agent — no need to run one per repo.
+- **Datadog Agent** on `localhost:8126` (APM/traces) and `localhost:8125/udp` (dogstatsd). Every service points `DD_AGENT_HOST=localhost` at this shared agent — no need to run one per repo.
 
 ### 2. Boot each application on the host
 
@@ -41,7 +42,7 @@ Each service repo has its own compose for its infra (Postgres, MongoDB, RabbitMQ
 | work-order-service | `3000` |
 | billing-service | `3001` |
 | execution-service | `3002` |
-| auth-service (`serverless offline`) | `3003` |
+| auth-service | `3003` |
 
 Kong reaches all four via `host.docker.internal` (`extra_hosts` in the compose maps it to `host-gateway` on Linux).
 
@@ -71,7 +72,9 @@ curl -s http://localhost:8000/work-orders/<id> \
   -H "Authorization: Bearer $TOKEN"
 ```
 
-Kong validates the token at the edge (`jwt` plugin), routes to the upstream service; the service's own Nest guards validate the token again (defence in depth) and enforce role/ownership rules.
+Kong validates the token at the edge (`jwt` plugin) and routes to the upstream service; the service's own Nest guards validate it again (defence in depth) and enforce role and ownership rules.
+
+The complete saga walkthrough — seed data, open an order, approve the quote, run the repair — is in the [work-order-service README](https://github.com/tech-challenge-workshop/work-order-service#run-the-full-system-distributed-saga-demo).
 
 ### End-to-end validation (run 2026-07-27)
 
@@ -87,41 +90,102 @@ Kong validates the token at the edge (`jwt` plugin), routes to the upstream serv
 | 8 | JWT with wrong `iss` claim | 401 | 401 (Kong can't match KongConsumer) |
 | 9 | JWT with wrong signature | 401 | 401 (Kong rejects HS256 verify) |
 
-Same-shape tokens produced by hand (`{ iss: "auth-service", sub, role, exp }` signed HS256 with the shared secret) are accepted by Kong. The `auth-service` unit test suite (30/30, 94.7% cov) proves the Lambda emits tokens with that exact shape.
+Same-shape tokens produced by hand (`{ iss: "auth-service", sub, role, exp }` signed HS256 with the shared secret) are accepted by Kong. The `auth-service` unit suite (30/30, 94.7% coverage) proves the service emits tokens with that exact shape.
 
 ## Routing table (Kong → services)
 
-Config declarative em `local/kong/kong.yml`. Resumo:
+Declarative config in `local/kong/kong.yml`:
 
-| Path | Método | Auth (Kong JWT plugin) | Upstream |
+| Path | Method | Auth (Kong JWT plugin) | Upstream |
 |---|---|:---:|---|
-| `/auth` | POST | ❌ público | auth-service :3003 |
-| `/auth/admin` | POST | ❌ público | auth-service :3003 |
-| `/customers/lookup` | GET | ❌ público (service-to-service) | work-order-service :3000 |
-| `/customers/*` | * | ✅ JWT | work-order-service :3000 |
-| `/vehicles/*` | * | ✅ JWT | work-order-service :3000 |
-| `/repair-services/*` | * | ✅ JWT | work-order-service :3000 |
-| `/work-orders/*` | * | ✅ JWT | work-order-service :3000 |
-| `/parts/prices` | GET | ❌ público (service-to-service) | execution-service :3002 |
-| `/parts/*` | * | ✅ JWT | execution-service :3002 |
-| `/executions/*` | * | ✅ JWT | execution-service :3002 |
-| `/quotes/*` | * | ✅ JWT | billing-service :3001 |
-| `/payments/*` | * | ✅ JWT | billing-service :3001 |
+| `/auth` | POST | public | auth-service :3003 |
+| `/auth/admin` | POST | public | auth-service :3003 |
+| `/customers/lookup` | GET | public (service-to-service) | work-order-service :3000 |
+| `/customers/*` | * | JWT | work-order-service :3000 |
+| `/vehicles/*` | * | JWT | work-order-service :3000 |
+| `/repair-services/*` | * | JWT | work-order-service :3000 |
+| `/work-orders/*` | * | JWT | work-order-service :3000 |
+| `/parts/prices` | GET | public (service-to-service) | execution-service :3002 |
+| `/parts/*` | * | JWT | execution-service :3002 |
+| `/executions/*` | * | JWT | execution-service :3002 |
+| `/quotes/*` | * | JWT | billing-service :3001 |
+| `/payments/*` | * | JWT | billing-service :3001 |
 
 ## Consumer JWT
 
-Um único `KongConsumer` (`auth-service`) representa "tokens emitidos pela nossa Lambda". A credential JWT tem `key: auth-service`, HS256, secret compartilhado com `JWT_SECRET` dos serviços. O Kong casa o consumer olhando o claim `iss` do token.
+A single `KongConsumer` (`auth-service`) represents "tokens issued by our auth service". Its JWT credential uses `key: auth-service`, HS256, and the secret shared with the services' `JWT_SECRET`. Kong matches the consumer by reading the token's `iss` claim.
 
-**Requer:** os tokens emitidos pelo `auth-service` precisam trazer `iss: "auth-service"` na assinatura. Sem isso, o plugin JWT do Kong rejeita o token com `Bad token`.
+**Requirement:** tokens must carry `iss: "auth-service"`. Without it Kong's JWT plugin rejects the request with `Bad token`, however valid the signature.
 
-## Notes for production (EKS)
+Locally the secret is a literal in `kong.yml`. In the cluster it comes from a Kubernetes `Secret` (`k8s/shared/kong/kong-consumer.example.yaml` shows the shape; the real file is gitignored).
 
-O compose local é o "modo dev" do que vai virar `Helm chart` + manifestos K8s no `k8s/` deste repo:
+## Kubernetes
 
-- Kong compose container → Kong Ingress Controller (KIC) via Helm chart `kong/ingress`.
-- `kong.yml` declarativo → `HTTPRoute` + `KongPlugin` + `KongConsumer` (Gateway API + CRDs).
-- Secret literal no yaml → `KongConsumer` credential referenciando um `Secret` do Kubernetes (idealmente vindo de AWS Secrets Manager via External Secrets Operator).
-- `host.docker.internal` → `ClusterIP` Service dos apps.
-- Datadog Agent como container → DaemonSet do Datadog Agent (chart oficial).
+`k8s/` renders to 26 resources through Kustomize:
 
-O ganho é que a estrutura conceitual (consumer + rotas + plugins) permanece a mesma; só muda como o Kong é instalado e como ele conhece os backends.
+```
+k8s/
+├── namespaces/           tech-challenge namespace
+├── work-order-service/   Deployment, Service, ConfigMap, HPA, secret example
+├── billing-service/      idem
+├── execution-service/    idem
+├── auth-service/         idem
+└── shared/
+    ├── kong/             Helm values, Gateway, HTTPRoutes, KongPlugin, KongConsumer
+    └── datadog/          Helm values for the Datadog Agent DaemonSet
+```
+
+Each service gets a `Deployment` with liveness and readiness probes on `/health`, a `ClusterIP` `Service`, and an `HPA` scaling on CPU (70%) and memory (75%).
+
+Routing uses the **Gateway API**: a `Gateway` named `kong` plus one `HTTPRoute` per exposure. Private routes carry `konghq.com/plugins: jwt-hs256,rate-limit-60rpm`; public ones (`/auth`, `/customers/lookup`, `/parts/prices`) carry no JWT plugin — the same split as the local `kong.yml`.
+
+Validate without a cluster:
+
+```bash
+kubectl kustomize k8s | kubeconform -summary -strict \
+  -ignore-missing-schemas -schema-location default
+```
+
+CI runs exactly that on every PR touching `k8s/`. Gateway API and Kong CRDs are reported as skipped: their schemas aren't in the default store.
+
+### Deploy order
+
+```bash
+# 1. cluster credentials
+cd terraform && make kubeconfig
+
+# 2. Kong Ingress Controller and the Datadog Agent (Helm)
+helm install kong kong/ingress -n kong --create-namespace -f k8s/shared/kong/values.yaml
+helm install datadog datadog/datadog -n datadog --create-namespace -f k8s/shared/datadog/values.yaml
+
+# 3. real secrets (copy the *.example.yaml files, fill them in, apply)
+kubectl apply -f k8s/work-order-service/secret.yaml   # etc.
+
+# 4. everything else
+kubectl apply -k k8s
+```
+
+## AWS infrastructure
+
+`terraform/` is an OpenTofu stack built on `terraform-aws-modules/{vpc,eks,rds}`: a VPC across 2 AZs with one NAT gateway, EKS 1.35 with a SPOT node group, one RDS PostgreSQL instance per owning service, a DocumentDB cluster for execution-service, and an Amazon MQ RabbitMQ broker for the saga.
+
+Full detail, cost breakdown and the destroy-when-idle workflow are in [`terraform/README.md`](terraform/README.md).
+
+```bash
+cd terraform
+make validate    # offline, no credentials needed
+make plan
+```
+
+## Local compose vs. cluster
+
+The local compose is the dev-mode version of what runs on EKS. The conceptual structure — consumer, routes, plugins — is identical; only the installation and service discovery change:
+
+| Local | Cluster |
+|---|---|
+| Kong compose container | Kong Ingress Controller via the `kong/ingress` Helm chart |
+| declarative `kong.yml` | `HTTPRoute` + `KongPlugin` + `KongConsumer` (Gateway API + CRDs) |
+| literal secret in yaml | `KongConsumer` credential referencing a Kubernetes `Secret` |
+| `host.docker.internal` | `ClusterIP` Services |
+| Datadog Agent container | Datadog Agent DaemonSet (official chart) |
+| Postgres / Mongo / RabbitMQ containers | RDS / DocumentDB / Amazon MQ |
