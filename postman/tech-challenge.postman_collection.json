@@ -1,0 +1,867 @@
+{
+  "info": {
+    "name": "Tech Challenge — Oficina",
+    "description": "Every request goes through Kong. Nothing talks to a service directly.\n\nRun the folders in order: **1 Auth** issues the tokens the rest need, **2 Catálogo** seeds data and stores the ids, **3 Saga** runs a work order end to end, **4 Segurança** shows what the gateway and the guards reject.\n\nIds and tokens are captured automatically into collection variables — you should not have to copy anything by hand.\n\nSwitch `baseUrl` to `http://localhost:8000` to run against the local compose.",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "variable": [
+    {
+      "key": "baseUrl",
+      "value": "http://a7b77c47b9484427e9a5cc0ffbc456f6-c123291b007cdb68.elb.us-east-1.amazonaws.com",
+      "type": "string",
+      "description": "Kong's load balancer. It changes every time the cluster is recreated: kubectl get svc -n kong kong-gateway-proxy -o jsonpath='{.status.loadBalancer.ingress[0].hostname}'. Use http://localhost:8000 for the local compose."
+    },
+    {
+      "key": "adminApiKey",
+      "value": "",
+      "type": "string",
+      "description": "Not committed. Read it from k8s/.secrets.env after secrets-from-tofu.sh has run:  grep '^ADMIN_API_KEY=' k8s/.secrets.env"
+    },
+    {
+      "key": "document",
+      "value": "111.444.777-35",
+      "type": "string"
+    },
+    {
+      "key": "adminToken",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "customerToken",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "customerId",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "vehicleId",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "serviceId",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "partId",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "workOrderId",
+      "value": "",
+      "type": "string"
+    }
+  ],
+  "item": [
+    {
+      "name": "1 · Autenticação",
+      "description": "Both routes are public — they are how a caller obtains a credential.",
+      "item": [
+        {
+          "name": "Admin — obter token",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "X-Api-Key",
+                "value": "{{adminApiKey}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/auth/admin",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "auth",
+                "admin"
+              ]
+            },
+            "description": "Constant-time comparison against ADMIN_API_KEY. Wrong key returns 401."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const body = pm.response.json();",
+                  "if (body.token) pm.collectionVariables.set('adminToken', body.token);",
+                  "pm.test('status is ok', () => pm.expect(pm.response.code).to.be.oneOf([200, 201]));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Cliente — obter token por CPF",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/auth",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "auth"
+              ]
+            },
+            "description": "auth-service validates the check digits, then calls /customers/lookup before issuing a token with role=customer.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"document\": \"{{document}}\"\n}"
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const body = pm.response.json();",
+                  "if (body.token) pm.collectionVariables.set('customerToken', body.token);",
+                  "pm.test('status is ok', () => pm.expect(pm.response.code).to.be.oneOf([200, 201]));"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "2 · Catálogo (admin)",
+      "description": "Seeds the data a work order needs. Ids are stored automatically.",
+      "item": [
+        {
+          "name": "Criar peça",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{adminToken}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/parts",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "parts"
+              ]
+            },
+            "description": "Lives in MongoDB Atlas, owned by execution-service.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"Pastilha de freio\",\n  \"priceCents\": 5000,\n  \"initialQuantity\": 100\n}"
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const body = pm.response.json();",
+                  "if (body.id) pm.collectionVariables.set('partId', body.id);",
+                  "pm.test('status is ok', () => pm.expect(pm.response.code).to.be.oneOf([200, 201]));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Criar serviço",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{adminToken}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/repair-services",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "repair-services"
+              ]
+            },
+            "description": "",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"Troca de pastilhas\",\n  \"priceCents\": 25000\n}"
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const body = pm.response.json();",
+                  "if (body.id) pm.collectionVariables.set('serviceId', body.id);",
+                  "pm.test('status is ok', () => pm.expect(pm.response.code).to.be.oneOf([200, 201]));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Criar cliente",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{adminToken}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/customers",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "customers"
+              ]
+            },
+            "description": "CPF/CNPJ check digits are validated in the domain, not just the DTO.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"Maria Silva\",\n  \"document\": \"{{document}}\"\n}"
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const body = pm.response.json();",
+                  "if (body.id) pm.collectionVariables.set('customerId', body.id);",
+                  "pm.test('status is ok', () => pm.expect(pm.response.code).to.be.oneOf([200, 201]));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Criar veículo",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{adminToken}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/vehicles",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "vehicles"
+              ]
+            },
+            "description": "The plate is unique — change it between runs.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"customerId\": \"{{customerId}}\",\n  \"plate\": \"DEM2A34\",\n  \"brand\": \"Honda\",\n  \"model\": \"Civic\",\n  \"year\": 2023\n}"
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const body = pm.response.json();",
+                  "if (body.id) pm.collectionVariables.set('vehicleId', body.id);",
+                  "pm.test('status is ok', () => pm.expect(pm.response.code).to.be.oneOf([200, 201]));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Buscar cliente por documento",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/customers/lookup?document={{document}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "customers",
+                "lookup"
+              ],
+              "query": [
+                {
+                  "key": "document",
+                  "value": "{{document}}"
+                }
+              ]
+            },
+            "description": "Public: auth-service calls it before issuing a token. Returns existence only."
+          }
+        }
+      ]
+    },
+    {
+      "name": "3 · Saga completa",
+      "description": "Opening the order starts a distributed transaction. Give it a second or two between steps and watch the status advance without further commands.",
+      "item": [
+        {
+          "name": "Abrir OS",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{adminToken}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/work-orders",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "work-orders"
+              ]
+            },
+            "description": "Fetches part prices from execution-service over REST, stores a snapshot, and publishes work-order.opened.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"customerId\": \"{{customerId}}\",\n  \"vehicleId\": \"{{vehicleId}}\",\n  \"serviceIds\": [\n    \"{{serviceId}}\"\n  ],\n  \"parts\": [\n    {\n      \"partId\": \"{{partId}}\",\n      \"quantity\": 2\n    }\n  ]\n}"
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const body = pm.response.json();",
+                  "if (body.id) pm.collectionVariables.set('workOrderId', body.id);",
+                  "pm.test('status is ok', () => pm.expect(pm.response.code).to.be.oneOf([200, 201]));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Consultar OS",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{adminToken}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/work-orders/{{workOrderId}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "work-orders",
+                "{{workOrderId}}"
+              ]
+            },
+            "description": "Within a couple of seconds: RECEIVED → IN_DIAGNOSIS → AWAITING_APPROVAL."
+          }
+        },
+        {
+          "name": "Consultar orçamento",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{adminToken}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/quotes/{{workOrderId}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "quotes",
+                "{{workOrderId}}"
+              ]
+            },
+            "description": "Generated by billing-service from the price snapshot."
+          }
+        },
+        {
+          "name": "Consultar peça (reservada)",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{adminToken}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/parts/{{partId}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "parts",
+                "{{partId}}"
+              ]
+            },
+            "description": "availableQuantity dropped, reservedQuantity rose — reserved, not consumed."
+          }
+        },
+        {
+          "name": "Aprovar orçamento (cliente)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{customerToken}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/quotes/{{workOrderId}}/approve",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "quotes",
+                "{{workOrderId}}",
+                "approve"
+              ]
+            },
+            "description": "Only role=customer may approve. Payment is confirmed and the order moves to IN_EXECUTION."
+          }
+        },
+        {
+          "name": "Registrar diagnóstico",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{adminToken}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/executions/{{workOrderId}}/diagnostics",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "executions",
+                "{{workOrderId}}",
+                "diagnostics"
+              ]
+            },
+            "description": "details is free-form — the reason execution-service uses a document store.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"description\": \"Pastilhas dianteiras abaixo de 2mm\",\n  \"details\": {\n    \"severity\": \"high\",\n    \"measurements\": {\n      \"padThicknessMm\": 1.5\n    }\n  }\n}"
+            }
+          }
+        },
+        {
+          "name": "Iniciar reparo",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{adminToken}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/executions/{{workOrderId}}/start-repair",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "executions",
+                "{{workOrderId}}",
+                "start-repair"
+              ]
+            },
+            "description": ""
+          }
+        },
+        {
+          "name": "Concluir reparo",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{adminToken}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/executions/{{workOrderId}}/complete",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "executions",
+                "{{workOrderId}}",
+                "complete"
+              ]
+            },
+            "description": "Consumes the reservation and publishes execution.completed. The order reaches FINISHED."
+          }
+        },
+        {
+          "name": "Consultar OS (final)",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{adminToken}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/work-orders/{{workOrderId}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "work-orders",
+                "{{workOrderId}}"
+              ]
+            },
+            "description": "status FINISHED, with five transitions in history."
+          }
+        },
+        {
+          "name": "Consultar peça (consumida)",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{adminToken}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/parts/{{partId}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "parts",
+                "{{partId}}"
+              ]
+            },
+            "description": "reservedQuantity back to 0 — the reservation became a permanent deduction."
+          }
+        }
+      ]
+    },
+    {
+      "name": "4 · Compensação",
+      "description": "Fail the repair instead of completing it and the saga unwinds in reverse.",
+      "item": [
+        {
+          "name": "Abrir segunda OS",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{adminToken}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/work-orders",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "work-orders"
+              ]
+            },
+            "description": "",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"customerId\": \"{{customerId}}\",\n  \"vehicleId\": \"{{vehicleId}}\",\n  \"serviceIds\": [\n    \"{{serviceId}}\"\n  ],\n  \"parts\": [\n    {\n      \"partId\": \"{{partId}}\",\n      \"quantity\": 5\n    }\n  ]\n}"
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const body = pm.response.json();",
+                  "if (body.id) pm.collectionVariables.set('workOrderId', body.id);",
+                  "pm.test('status is ok', () => pm.expect(pm.response.code).to.be.oneOf([200, 201]));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Aprovar orçamento (cliente)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{customerToken}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/quotes/{{workOrderId}}/approve",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "quotes",
+                "{{workOrderId}}",
+                "approve"
+              ]
+            },
+            "description": ""
+          }
+        },
+        {
+          "name": "Falhar reparo",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{adminToken}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/executions/{{workOrderId}}/fail",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "executions",
+                "{{workOrderId}}",
+                "fail"
+              ]
+            },
+            "description": "Refunds the payment, cancels the quote, releases the parts, cancels the order."
+          }
+        },
+        {
+          "name": "Consultar OS (cancelada)",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{adminToken}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/work-orders/{{workOrderId}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "work-orders",
+                "{{workOrderId}}"
+              ]
+            },
+            "description": "status CANCELLED. Only the steps that ran were undone."
+          }
+        }
+      ]
+    },
+    {
+      "name": "5 · Segurança",
+      "description": "What the gateway and the guards reject.",
+      "item": [
+        {
+          "name": "Sem token → 401",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/work-orders",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "work-orders"
+              ]
+            },
+            "description": "Kong rejects at the edge; the request never reaches a pod."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('401', () => pm.response.to.have.status(401));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Chave admin errada → 401",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/auth/admin",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "auth",
+                "admin"
+              ]
+            },
+            "description": "Set X-Api-Key to anything else to see it."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('401', () => pm.response.to.have.status(401));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Admin tentando aprovar → 403",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{adminToken}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/quotes/{{workOrderId}}/approve",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "quotes",
+                "{{workOrderId}}",
+                "approve"
+              ]
+            },
+            "description": "The token is valid; the role is wrong. Approving is the customer's decision."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('403', () => pm.response.to.have.status(403));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Rota pública sem token → 200",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/parts/prices?ids={{partId}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "parts",
+                "prices"
+              ],
+              "query": [
+                {
+                  "key": "ids",
+                  "value": "{{partId}}"
+                }
+              ]
+            },
+            "description": "Service-to-service price snapshot. Prices only — no stock levels."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200', () => pm.response.to.have.status(200));"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

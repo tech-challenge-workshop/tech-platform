@@ -4,6 +4,7 @@
 | --- | --- |
 | [architecture.md](architecture.md) | Component diagram, sequence diagrams for authentication, opening a work order and compensation, and the deployment pipeline |
 | [databases.md](databases.md) | Why each store is what it is, ER diagrams, and the reasoning behind each modelling choice |
+| [security.md](security.md) | Vulnerability analysis: SAST, SCA and DAST results, mapped against the OWASP Top 10 |
 
 ## Decisions
 
