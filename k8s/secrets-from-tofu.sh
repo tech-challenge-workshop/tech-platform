@@ -30,21 +30,59 @@ secret_json() {
   aws secretsmanager get-secret-value --secret-id "$1" --query SecretString --output text
 }
 
-# Generated once, then reused: rotating these would invalidate every live token
-# and break the Kong consumer credential at the same time.
+# Values already in the cache win over the environment: rotating JWT_SECRET
+# would invalidate every live token and desynchronise the Kong consumer
+# credential at the same time.
 if [[ -f "$CACHE" ]]; then
   # shellcheck source=/dev/null
   source "$CACHE"
-  echo "reusing JWT_SECRET and ADMIN_API_KEY from .secrets.env"
-else
-  JWT_SECRET="$(openssl rand -hex 32)"
-  ADMIN_API_KEY="$(openssl rand -hex 24)"
-  printf 'JWT_SECRET=%s\nADMIN_API_KEY=%s\n' "$JWT_SECRET" "$ADMIN_API_KEY" > "$CACHE"
-  chmod 600 "$CACHE"
-  echo "generated JWT_SECRET and ADMIN_API_KEY into .secrets.env"
 fi
 
+JWT_SECRET="${JWT_SECRET:-$(openssl rand -hex 32)}"
+ADMIN_API_KEY="${ADMIN_API_KEY:-$(openssl rand -hex 24)}"
+GHCR_USER="${GHCR_USER:-${GITHUB_USER:-figueiredoleo}}"
 MERCADO_PAGO_ACCESS_TOKEN="${MERCADO_PAGO_ACCESS_TOKEN:-}"
+
+if [[ -z "${GHCR_PAT:-}" ]]; then
+  cat >&2 <<'EOT'
+GHCR_PAT is not set and .secrets.env has none.
+
+The GHCR packages are private, so the cluster needs a token to pull them.
+Create a classic one carrying only the read:packages scope and export it:
+
+  export GHCR_PAT=ghp_...    # https://github.com/settings/tokens/new
+EOT
+  exit 1
+fi
+
+# Rewritten in full rather than appended, so repeated runs cannot accumulate
+# duplicate lines.
+umask 077
+cat > "$CACHE" <<EOF
+JWT_SECRET=$JWT_SECRET
+ADMIN_API_KEY=$ADMIN_API_KEY
+GHCR_PAT=$GHCR_PAT
+GHCR_USER=$GHCR_USER
+EOF
+echo "credentials cached in .secrets.env"
+
+# Everything below reads the platform outputs, so fail here with something
+# actionable instead of letting a backend or "no outputs" error surface.
+if ! tofu -chdir="$TOFU_DIR" output -raw cluster_name >/dev/null 2>&1; then
+  cat >&2 <<'EOT'
+
+The platform stack has no outputs yet — this script runs *after* the
+infrastructure exists. From ../terraform:
+
+  make bootstrap    # once per account: creates the state bucket
+  make init
+  make plan
+  make apply
+
+Then run this script again.
+EOT
+  exit 1
+fi
 
 echo "reading OpenTofu outputs..."
 
@@ -124,6 +162,26 @@ stringData:
   ADMIN_API_KEY: "$ADMIN_API_KEY"
 EOF
 
+# One pull secret for the whole namespace, referenced by every Deployment.
+# `auth` is what the Docker credential helper actually reads; username and
+# password are kept for tools that inspect the file.
+GHCR_AUTH="$(printf '%s:%s' "$GHCR_USER" "$GHCR_PAT" | base64 -w0)"
+GHCR_DOCKERCONFIG="$(
+  printf '{"auths":{"ghcr.io":{"username":"%s","password":"%s","auth":"%s"}}}' \
+    "$GHCR_USER" "$GHCR_PAT" "$GHCR_AUTH" | base64 -w0
+)"
+
+write_secret "$K8S_DIR/ghcr-pull-secret.yaml" <<EOF
+apiVersion: v1
+kind: Secret
+metadata:
+  name: ghcr-pull
+  namespace: tech-challenge
+type: kubernetes.io/dockerconfigjson
+data:
+  .dockerconfigjson: "$GHCR_DOCKERCONFIG"
+EOF
+
 # Kong verifies incoming tokens with the same shared secret, matching the
 # consumer by the token's iss claim.
 write_secret "$K8S_DIR/shared/kong/kong-consumer.yaml" <<EOF
@@ -157,7 +215,8 @@ cat <<'EOF'
 
 Done. Apply them with:
 
-  kubectl apply -f work-order-service/secret.yaml \
+  kubectl apply -f ghcr-pull-secret.yaml \
+                -f work-order-service/secret.yaml \
                 -f billing-service/secret.yaml \
                 -f execution-service/secret.yaml \
                 -f auth-service/secret.yaml \

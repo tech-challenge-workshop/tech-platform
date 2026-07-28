@@ -247,13 +247,30 @@ an EKS access entry granting `AmazonEKSEditPolicy` **scoped to the
 `tech-challenge` namespace**, so the pipeline cannot touch the control plane,
 the Kong namespace or the Datadog agent.
 
-### Making the images pullable
+### Pulling the images
 
-The GHCR packages must be public, or the pods fail to pull. Set each one at
-[the organisation's packages page](https://github.com/orgs/tech-challenge-workshop/packages)
-→ *Package settings* → *Change visibility* → **Public**. The alternative is an
-`imagePullSecret` holding a personal access token, which expires and has to be
-rotated.
+The GHCR packages are **private**, so every pod needs a pull credential.
+`secrets-from-tofu.sh` builds it from `GHCR_PAT` — a classic GitHub token
+carrying **only** the `read:packages` scope, created at
+<https://github.com/settings/tokens/new>:
+
+```sh
+export GHCR_PAT=ghp_...
+k8s/secrets-from-tofu.sh
+kubectl apply -f k8s/ghcr-pull-secret.yaml
+```
+
+One `ghcr-pull` secret serves the namespace; all four Deployments reference it
+through `imagePullSecrets`. The token is cached in `k8s/.secrets.env` so reruns
+do not need it exported again.
+
+> **When the token expires**, every pod stops at `ImagePullBackOff` and the
+> deploy job fails at `rollout status`. The cause is not obvious from the pod
+> logs — they are empty, because no container ever started. Regenerate the
+> token, rerun the script, reapply the secret and restart the deployments.
+
+The scope is deliberately minimal: the cluster only ever pulls, never publishes.
+A leaked token lets someone download the images and nothing else.
 
 ## AWS infrastructure
 
