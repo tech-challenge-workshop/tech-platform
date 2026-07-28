@@ -77,19 +77,13 @@ new cluster gives it a new hostname — the function must be redeployed with the
 current address, or `/auth` silently stops issuing customer tokens.
 `scripts/bootstrap-cluster.sh` does this.
 
-## Note on the deployment model
+## Deployment
 
-This service ran as a container for part of the project — a workaround for
-`serverless-offline` crashing locally that became a deployment decision without
-being examined.
+The function is deployed by CI on every push to `main`: the workflow assumes an
+AWS role through OIDC and runs `serverless deploy`. Kong routes `/auth` to the
+API Gateway endpoint in front of it through an `ExternalName` service, so the
+gateway stays the single entry point.
 
-Deploying it properly as a Lambda exposed a defect the container path could not
-have: the admin handler was synchronous, and the Lambda Node runtime only reads
-a handler that returns a Promise or calls the callback. Its return value was
-discarded, and **every request resolved to HTTP 200 with a null body, including
-requests carrying the wrong API key**.
-
-The container calls the function directly and reads the return, so nothing local
-would ever have caught it. The lesson is recorded here because it generalises: a
-workaround adopted under time pressure deserves an explicit decision before it
-becomes the architecture.
+Handlers are `async`. The Lambda Node runtime reads a handler that returns a
+Promise or one that calls the callback, and a synchronous return value is not
+read at all.

@@ -3,9 +3,6 @@
 Everything needed to take the platform from an empty AWS account to a working
 cluster running the four services, and to tear it back down.
 
-Written after doing it for real on 2026-07-28. Every "gotcha" below is
-something that actually broke during that run — not a hypothetical.
-
 ---
 
 ## Before you start
@@ -21,17 +18,13 @@ something that actually broke during that run — not a hypothetical.
 
 ### The AWS Free Plan restricts services and instance types
 
-The new Free Tier has a **Free Plan** and a **Paid Plan**. On the Free Plan any
-resource outside the free-tier-eligible list is rejected, sometimes with a clear
-error and sometimes by hanging:
+The new Free Tier has a **Free Plan** and a **Paid Plan**. On the Free Plan only
+free-tier-eligible services and instance types may be used, which shapes two
+choices in this stack:
 
-- **DocumentDB is unavailable entirely** — `FreeTierRestrictionError: the
-  specified cluster engine type is not available with free plan accounts`. This
-  is why the document store is MongoDB Atlas.
-- **EC2 instance types are filtered.** A node group asking for `t3.medium`
-  never launches: the ASG retries silently and the node group sits in
-  `CREATING` for 20+ minutes with an empty health issue list. The reason is only
-  visible in the ASG's scaling activities.
+- the document store is **MongoDB Atlas**, because DocumentDB is not available
+  on the plan at all
+- nodes are **`c7i-flex.large`**, which is eligible; `t3.medium` is not
 
 Check what the account allows:
 
@@ -42,7 +35,7 @@ aws ec2 describe-instance-types --filters Name=free-tier-eligible,Values=true \
 ```
 
 `c7i-flex.large` (2 vCPU / 4 GiB) and `m7i-flex.large` (2 vCPU / 8 GiB) are both
-eligible and larger than the `t3.medium` that is not.
+eligible.
 
 ---
 
@@ -83,9 +76,9 @@ make apply
 **The billing clock starts here** — roughly **$0.43/h**. Expect 15–25 minutes;
 EKS and Amazon MQ dominate.
 
-> **Atlas 401.** If the Atlas resources fail with `HTTP 401 Unauthorized`, the
-> cause is almost always the API key's **API Access List**, not the key itself.
-> Add your current IP in Atlas under `Organization → Applications → your key`.
+> **The Atlas API key needs your IP in its access list**, under
+> `Organization → Applications → your key`. Calls from anywhere else are
+> rejected with `401 Unauthorized`.
 
 Take note of the outputs:
 
@@ -103,15 +96,13 @@ kubectl get nodes     # expect 2 Ready
 
 ## 4. The prerequisite the charts do not install
 
-Easy to forget, and it fails quietly rather than loudly.
-
 ```sh
 kubectl apply -f https://github.com/kubernetes-sigs/metrics-server/releases/download/v0.7.2/components.yaml
 ```
 
-> **Without metrics-server every HPA reports `cpu: <unknown>` and never
-> scales.** The manifests look correct and do nothing. Verify with
-> `kubectl get hpa -n tech-challenge` — `TARGETS` must show percentages.
+> metrics-server is what feeds the HPAs. Verify with
+> `kubectl get hpa -n tech-challenge` — `TARGETS` must show percentages, not
+> `<unknown>`.
 
 ## 5. Secrets
 
@@ -127,8 +118,8 @@ kubectl apply -f k8s/ghcr-pull-secret.yaml \
 ```
 
 The script reads every database and broker credential from Secrets Manager and
-percent-encodes them: RDS generates passwords containing `#`, `<`, `>` and
-friends, and an unencoded `#` truncates the connection string into a fragment.
+percent-encodes them, since RDS generates passwords containing characters that
+are reserved in a URL.
 
 ## 6. Kong
 
@@ -138,11 +129,9 @@ helm install kong kong/ingress -n kong --create-namespace \
   -f k8s/shared/kong/values.yaml --wait --timeout 8m
 ```
 
-> **The admin API must stay enabled.** The controller pushes configuration
-> through it. Disabling it deadlocks the install: the gateway never turns Ready
-> without config and the controller never finds an endpoint to send it to. Keep
-> it a headless `ClusterIP` — only the proxy gets a LoadBalancer. It also has to
-> be the **TLS** listener; the controller talks to `:8444`.
+> **The admin API must stay enabled, as TLS on `:8444`.** The controller pushes
+> configuration through it. It is a headless `ClusterIP` — only the proxy gets a
+> LoadBalancer, so the admin API is never exposed outside the cluster.
 
 ## 7. Datadog
 
@@ -154,9 +143,8 @@ helm install datadog datadog/datadog -n datadog \
   -f k8s/shared/datadog/values.yaml --wait --timeout 8m
 ```
 
-The agent's service is `datadog`, not `datadog-agent`. The Deployments do not
-rely on the name at all: they set `DD_AGENT_HOST` from `status.hostIP` so each
-pod talks to the agent on its own node.
+The Deployments set `DD_AGENT_HOST` from `status.hostIP`, so each pod talks to
+the agent on its own node rather than through a service name.
 
 ## 8. Database migrations
 
@@ -164,9 +152,9 @@ Run as a Kubernetes Job, from an image built off the `migrator` target — the
 runtime images are slim and carry neither the Prisma CLI nor `migrations/`.
 
 The deploy pipeline recreates the Job against the image of that release and
-waits for it before rolling out, so a failed migration stops the release instead
-of following it. `bootstrap-cluster.sh` does the same for a fresh cluster, which
-has had no push to trigger a pipeline.
+waits for it before rolling out, so a failed migration stops the release.
+`bootstrap-cluster.sh` does the same for a fresh cluster, which has had no push
+to trigger a pipeline.
 
 By hand:
 
@@ -176,8 +164,8 @@ kubectl -n tech-challenge create -f k8s/work-order-service/migration-job.yaml
 kubectl -n tech-challenge wait --for=condition=complete job/work-order-service-migrate --timeout=5m
 ```
 
-> Prisma 7 reads `datasource.url` from `prisma.config.ts`, so that file has to be
-> in the migrator image — `DATABASE_URL` alone is not enough.
+> Prisma 7 reads `datasource.url` from `prisma.config.ts`, which is why the
+> migrator image carries it alongside the schema.
 
 ## 9. Services
 
@@ -206,9 +194,9 @@ From then on a push to `main` builds, tests, pushes the image, runs the
 migration Job and rolls out. Without the secret the deploy job skips itself,
 which keeps `main` green while no cluster exists.
 
-> **Secrets are resolved when a run is created, not when a job starts.** A run
-> that began before the secret existed will never see it — trigger a new one.
-> Every workflow accepts `workflow_dispatch` for exactly this.
+> GitHub resolves secrets when a run is created, so a newly added secret only
+> applies to runs started afterwards. Every workflow accepts `workflow_dispatch`
+> to trigger one.
 
 ---
 
@@ -250,23 +238,3 @@ protection, no backup retention.
 The Atlas project and cluster are destroyed too. The state bucket and the GHCR
 images survive, so the next `apply` starts from step 2.
 
----
-
-## Everything that broke on the first run
-
-| Symptom | Cause |
-| --- | --- |
-| Node group `CREATING` for 20+ min, no instances | `t3.medium` not free-tier eligible; visible only in ASG scaling activities |
-| `FreeTierRestrictionError` on DocumentDB | not available on the Free Plan at all |
-| `Broker engine type [RabbitMQ] does not support host instance type [mq.t3.micro]` | RabbitMQ's smallest is `mq.m7g.medium` |
-| Atlas `HTTP 401` | provider had no credentials — needs an explicit `provider "mongodbatlas" {}` block, and the IP must be in the key's access list |
-| Kong install times out, controller `CrashLoopBackOff` | admin API disabled |
-| Controller `connection refused :8444` | admin listener had HTTP enabled instead of TLS |
-| `no matches for kind "HTTPRoute"` | Gateway API CRDs not installed |
-| Gateway stuck at `Waiting for controller` | never resolved; routing is Ingress now |
-| `ImagePullBackOff` on one service | its `imagePullSecrets` had been removed by an over-greedy edit |
-| `CrashLoopBackOff`, `Invalid URL at DATABASE_URL` | RDS password contained `#`; the connection string was not percent-encoded |
-| `self-signed certificate in certificate chain` | RDS presents the Amazon RDS CA; needs the bundle and `sslrootcert` |
-| `TableDoesNotExist` | migrations never ran against RDS |
-| `getaddrinfo ENOTFOUND datadog-agent.datadog...` | wrong service name; use `status.hostIP` instead |
-| HPAs at `cpu: <unknown>`, k9s without metrics | metrics-server not installed |

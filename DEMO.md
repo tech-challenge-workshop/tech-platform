@@ -285,8 +285,8 @@ kubectl rollout status deployment/work-order-service -n tech-challenge
 kubectl get pods -n tech-challenge -w
 ```
 
-The pipeline fails if the new pods never become ready, so a broken image never
-silently stays broken.
+`rollout status` gates the job, so the pipeline only reports success once the
+new pods are actually serving.
 
 ---
 

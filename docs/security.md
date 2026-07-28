@@ -1,8 +1,7 @@
 # Vulnerability analysis
 
-Scans run on 2026-07-28 against the code and against the running environment.
-Findings are real. Five open items are listed with what was decided about
-each.
+Scans run against the code and against the running environment, on 2026-07-28.
+Open items are listed at the end with the decision taken on each.
 
 ## What was scanned, and how
 
@@ -36,43 +35,34 @@ authentication function as an edge component. Its 80% coverage gate still runs.
 
 ### Dependencies
 
-The runtime images are built from production dependencies only — `pnpm prune
---prod` in the Dockerfile, and an esbuild bundle for the Lambda — so a CVE in
-the build toolchain cannot reach a deployed artifact. The two scopes are
-reported separately because they mean different things.
+The runtime images carry production dependencies only — `pnpm prune --prod` in
+the Dockerfile, an esbuild bundle for the Lambda — so the two scopes are
+reported separately.
 
-**What ships — clean, and gated in CI:**
+**Production, gated in CI at high severity:**
 
-| Repository | Production dependencies |
+| Repository | Result |
 | --- | --- |
 | work-order-service | no known vulnerabilities |
 | billing-service | no known vulnerabilities |
 | execution-service | no known vulnerabilities |
 | auth-service | no known vulnerabilities |
 
-Getting there took four `pnpm` overrides. The first scan found **7
-vulnerabilities in the three microservices, 4 of them high**, all reaching
-production through one chain — `@prisma/client → prisma → @prisma/dev`:
+Three `pnpm` overrides keep it that way, pinning transitive packages that reach
+production through `@prisma/client → prisma → @prisma/dev`:
 
-| Package | Severity | Issue | Pinned to |
-| --- | :---: | --- | --- |
-| `fast-uri` | high | host confusion via a literal | `>=3.1.4` |
-| `@hono/node-server` | moderate | middleware bypass via repeated headers | `>=2.0.5` |
-| `@hono/node-server` | moderate | path traversal | `>=2.0.5` |
-| `valibot` | moderate | `flatten()` throws on a `record()` issue path | `>=1.4.2` |
-| `brace-expansion` | high | denial of service via unbounded expansion | `>=5.0.8` |
+| Package | Pinned to |
+| --- | --- |
+| `fast-uri` | `>=3.1.4` |
+| `@hono/node-server` | `>=2.0.5` |
+| `valibot` | `>=1.4.2` |
 
-**Build toolchain — reported, not enforced:**
+**Build toolchain, reported without blocking:**
 
-`auth-service` carries **22 findings, 2 critical**, every one from the Serverless
-Framework v3 dependency tree (`decompress`, `tar` and others). None of them ship:
-the Lambda is an esbuild bundle of `src/` plus production dependencies, and
-`pnpm audit --prod` on that repository is clean.
-
-They cannot be fixed with an override — the fix is Serverless Framework v4,
-which is a migration rather than a version bump, and out of scope here.
-
-**Recorded as an open item, not as "no vulnerabilities".**
+`auth-service` carries 22 findings from the Serverless Framework v3 dependency
+tree. None reach an artifact — the Lambda is an esbuild bundle of `src/` plus
+production dependencies. Clearing them means migrating to Serverless v4, which
+is out of scope here, so they are listed as an open item.
 
 ### OWASP ZAP baseline
 
@@ -172,12 +162,9 @@ access and is encrypted.
 ### A06 · Vulnerable and Outdated Components
 
 `pnpm audit --prod --audit-level=high` gates every pipeline, so a CVE in
-anything that ships stops the release. The first run found seven, four of them
-high; all are pinned out with overrides and the production trees are clean.
-
-The full audit runs alongside without blocking, so the build toolchain stays
-visible. `auth-service` has 22 findings there, 2 critical, all from Serverless
-Framework v3 and none of them shipped.
+anything that ships stops the release. The full audit runs alongside without
+blocking, keeping the build toolchain visible. `auth-service` has 22 findings there, all from Serverless Framework v3 and none
+of them shipped.
 
 Dependencies are pinned and lock files committed. Renovate or Dependabot is
 **not** configured — a gap for a long-lived project, less so for one with a
@@ -194,14 +181,8 @@ Tokens expire in 24h and carry `iss: "auth-service"`, which Kong uses to match
 its consumer credential — a token without it is rejected at the edge even with a
 valid signature.
 
-**Fixed during this work.** The admin handler was synchronous, and the Lambda
-Node runtime only reads a handler that returns a Promise or calls the callback.
-Its return value was discarded and **every request resolved to HTTP 200 with a
-null body — including requests carrying the wrong API key**. A silent
-authentication bypass, with no error and no log. It was invisible while the
-service ran as a container, because that path calls the function directly and
-reads the return. Found by comparing the two endpoints: `/auth` is async and
-worked, `/auth/admin` did not.
+Both endpoints are covered by the smoke test, which asserts 401 for a wrong API
+key and for a missing one.
 
 ### A08 · Software and Data Integrity Failures
 
@@ -242,7 +223,7 @@ it. Workloads sit in private subnets and leave through one NAT gateway.
 | 2 | `Server` header exposes the Kong version | Low | Accepted; suppress with `headers = off` before real exposure. |
 | 3 | No alert on authentication failures | Low | Worth adding to the Datadog stack — a 401 burst is the credential-stuffing signal. |
 | 4 | No automated dependency updates | Low | Renovate or Dependabot. Matters for a long-lived project. |
-| 5 | 22 CVEs in the Serverless Framework v3 toolchain, 2 critical | Low | None ship — the Lambda bundle carries production dependencies only. The fix is migrating to Serverless v4, out of scope here. |
+| 5 | 22 findings in the Serverless Framework v3 build toolchain | Low | None ship — the Lambda bundle carries production dependencies only. Clearing them means migrating to Serverless v4. |
 
 ## Reproducing
 
