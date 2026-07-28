@@ -1,106 +1,111 @@
-# Kubernetes manifests — Tech Challenge (Phase 4)
+# Kubernetes manifests
 
-Single-environment deployment for EKS (also works on any Kubernetes cluster with the Kong Ingress Controller + Datadog Agent installed).
-
-## Layout
+Everything that runs in the cluster. Rendered with Kustomize, validated with
+`kubeconform` on every pull request.
 
 ```
 k8s/
-├── namespaces/tech-challenge.yaml
+├── namespaces/             tech-challenge namespace
+├── work-order-service/     Deployment, Service, ConfigMap, HPA, migration Job
+├── billing-service/        idem
+├── execution-service/      Deployment, Service, ConfigMap, HPA
+├── auth-service/           ExternalName only — the service is a Lambda
 ├── shared/
-│   ├── kong/               ← Helm values + Gateway API + KongPlugin + KongConsumer
-│   └── datadog/            ← Helm values for the datadog-agent DaemonSet
-├── work-order-service/     ← configmap + deployment + service + hpa + secret.example
-├── execution-service/      ← same structure
-├── billing-service/        ← same structure
-├── auth-service/           ← same structure (container, not Lambda)
-└── kustomization.yaml      ← root — `kubectl apply -k .` deploys everything
+│   ├── kong/               Helm values, Ingresses, KongPlugins, KongConsumer
+│   ├── datadog/            Helm values for the Agent
+│   └── metrics-server/     why it is a prerequisite
+└── secrets-from-tofu.sh    renders every secret from the OpenTofu outputs
 ```
 
-## Deploy order (once per cluster)
+`kubectl kustomize .` renders **22 resources**: 6 Ingresses, 4 Services,
+3 Deployments, 3 ConfigMaps, 3 HPAs, 2 KongPlugins and the Namespace.
 
-**1. Install Kong Ingress Controller (Helm)**
+Three things are deliberately **not** in the kustomization:
 
-```bash
-helm repo add kong https://charts.konghq.com && helm repo update
-helm install kong kong/ingress -n kong --create-namespace -f shared/kong/values.yaml
-kubectl apply -f shared/kong/gateway.yaml   # Gateway CR that HTTPRoutes bind to
+| Excluded | Why |
+| --- | --- |
+| `secret.yaml`, `kong-consumer.yaml`, `ghcr-pull-secret.yaml` | generated from the OpenTofu outputs, never committed |
+| `migration-job.yaml` | belongs to a release, not to the desired state — the pipeline applies it |
+| Kong and Datadog | installed with Helm; only their values live here |
+
+## Routing
+
+Kong routes by path, expressed as **Ingress** rather than Gateway API: the Kong
+controller accepted the GatewayClass but left every Gateway at
+`Waiting for controller`, with correct RBAC and no error in the logs. Ingress is
+KIC's primary mode, needs no extra CRDs and expresses the same routing.
+
+| Path | Auth | Upstream |
+| --- | :---: | --- |
+| `POST /auth`, `/auth/admin` | public | API Gateway → Lambda |
+| `GET /customers/lookup` | public | work-order-service |
+| `GET /parts/prices` | public | execution-service |
+| `/customers`, `/vehicles`, `/repair-services`, `/work-orders` | JWT | work-order-service |
+| `/parts`, `/executions` | JWT | execution-service |
+| `/quotes`, `/payments` | JWT | billing-service |
+
+Private routes carry `konghq.com/plugins: jwt-hs256,rate-limit-60rpm`. Paths are
+never stripped — the services expect the path they publish.
+
+The two public service-to-service routes are public because they are called
+before a token exists in that flow: `auth-service` checks that a customer exists
+before issuing one, and `work-order-service` snapshots part prices while opening
+an order. Neither returns anything sensitive.
+
+`/auth` additionally sets `konghq.com/preserve-host: "false"`. API Gateway
+rejects any Host that is not its own `execute-api` domain, so forwarding the
+load balancer's hostname returns 403 before the Lambda is ever invoked.
+
+## Prerequisite the charts do not install
+
+```sh
+kubectl apply -f https://github.com/kubernetes-sigs/metrics-server/releases/download/v0.7.2/components.yaml
 ```
 
-**2. Install Datadog Agent (Helm)**
+Without it every HPA reports `cpu: <unknown>` and never scales — the manifests
+look correct and do nothing. See [`shared/metrics-server`](shared/metrics-server).
 
-```bash
-helm repo add datadog https://helm.datadoghq.com && helm repo update
-kubectl create namespace datadog
-kubectl create secret generic datadog-api -n datadog --from-literal api-key="$DD_API_KEY"
-helm install datadog datadog/datadog -n datadog -f shared/datadog/values.yaml
-```
+## Connectivity details worth knowing
 
-**3. Provision backing services**
+**RDS TLS.** work-order-service and billing-service run an init container that
+downloads the Amazon RDS CA bundle into `/etc/ssl/rds`, and connect with
+`sslmode=verify-full`. Without it the handshake fails with "self-signed
+certificate in certificate chain". Keeping the bundle out of the image means the
+same image still runs against a plain PostgreSQL container locally.
 
-Terraform provisions RDS (Postgres for work-order + billing), DocumentDB or Mongo Atlas (execution), and Amazon MQ (RabbitMQ). See `tech-database/terraform/` — endpoints go into the per-service `Secret`.
+**Private images.** The GHCR packages are private, so every pod references the
+`ghcr-pull` secret. An expired token surfaces as `ImagePullBackOff` with empty
+pod logs, because no container ever starts.
 
-For a quick dev cluster, install in-cluster charts: `bitnami/postgresql`, `bitnami/mongodb`, `bitnami/rabbitmq`.
+**Datadog.** `DD_AGENT_HOST` comes from `status.hostIP`, not a service name, so
+each pod talks to the Agent on its own node.
 
-## Deploy the applications
+## Applying
 
-**1. Fill in the secrets (never commit these)**
+The whole sequence, including Helm and the prerequisite above, is
+[`../scripts/bootstrap-cluster.sh`](../scripts/bootstrap-cluster.sh). By hand:
 
-```bash
-for svc in work-order-service billing-service execution-service auth-service; do
-  cp $svc/secret.example.yaml $svc/secret.yaml
-  # edit $svc/secret.yaml with real DATABASE_URL / JWT_SECRET / DD_API_KEY / etc
-  kubectl apply -f $svc/secret.yaml
-done
-```
-
-**2. Fill in the Kong JWT credential secret**
-
-```bash
-cp shared/kong/kong-consumer.example.yaml shared/kong/kong-consumer.yaml
-# edit secret value with the same JWT_SECRET used by the services
-kubectl apply -f shared/kong/kong-consumer.yaml
-```
-
-**3. Apply everything else**
-
-```bash
+```sh
+kubectl apply -f namespaces/tech-challenge.yaml
+export GHCR_PAT=ghp_...
+./secrets-from-tofu.sh
+kubectl apply -f ghcr-pull-secret.yaml \
+              -f work-order-service/secret.yaml \
+              -f billing-service/secret.yaml \
+              -f execution-service/secret.yaml \
+              -f shared/kong/kong-consumer.yaml
 kubectl apply -k .
 ```
 
-## Routing table (edge → service)
+Migrations are applied by the deploy pipeline, which recreates the Job against
+the image of that release and waits for it before rolling out.
 
-Same policy as `../local/kong/kong.yml` — Kong validates JWT at the edge, Nest guards re-validate + enforce role/ownership.
+## Validating without a cluster
 
-| Path | Method | JWT at edge? | Upstream |
-|---|---|:---:|---|
-| `POST /auth` · `POST /auth/admin` | POST | ❌ public | `auth-service:3003` |
-| `GET /customers/lookup` | GET | ❌ public | `work-order-service:3000` |
-| `/customers/*` · `/vehicles/*` · `/repair-services/*` · `/work-orders/*` | * | ✅ | `work-order-service:3000` |
-| `GET /parts/prices` | GET | ❌ public | `execution-service:3002` |
-| `/parts/*` · `/executions/*` | * | ✅ | `execution-service:3002` |
-| `/quotes/*` · `/payments/*` | * | ✅ | `billing-service:3001` |
-
-Rate limit `60/min` (per Kong node) on every JWT route.
-
-## Validation locally
-
-Without needing a real cluster:
-
-```bash
-# render everything, count resources
-kubectl kustomize . | grep -c '^kind:'
-
-# schema validation against upstream K8s + skip Kong CRDs
+```sh
 kubectl kustomize . | kubeconform -summary -strict \
   -ignore-missing-schemas -schema-location default
 ```
 
-Expected: 26 resources total, 17 valid (standard K8s types), 9 skipped (Gateway API + Kong CRDs — no offline schemas), 0 errors.
-
-## What's NOT here yet
-
-- `PodDisruptionBudget` — nice-to-have; add if you want stricter voluntary-disruption guarantees.
-- `NetworkPolicy` — for cluster-wide east-west traffic restriction; requires the CNI to support it (EKS with VPC CNI does).
-- Multi-env overlays (`overlays/qa`, `overlays/staging`, `overlays/prod`) — single env for this deliverable; add later if promotion is needed.
-- Real `terraform apply` for RDS/DocumentDB/etc — happens in `tech-database`.
+Expected: 22 resources, 20 valid, 2 skipped (the Kong CRDs have no offline
+schema), 0 errors.

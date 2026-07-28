@@ -5,8 +5,9 @@ Cross-cutting infrastructure for the Tech Challenge (Phase 4) — the pieces tha
 | Directory | Purpose |
 |---|---|
 | `local/` | docker-compose booting the API gateway (Kong) and the shared Datadog Agent for local development. Every dev on the team runs the same setup. |
-| `k8s/` | Kustomize manifest set for the four services plus the Kong Gateway API resources and Datadog Helm values. |
-| `terraform/` | OpenTofu stack provisioning the AWS platform: VPC, EKS, RDS, DocumentDB, Amazon MQ. |
+| `k8s/` | Kustomize manifest set for the services, the Kong ingresses and the Datadog Helm values. |
+| `terraform/` | OpenTofu stack provisioning the platform: VPC, EKS, RDS, Amazon MQ, MongoDB Atlas, and the GitHub OIDC deploy role. |
+| `scripts/` | `bootstrap-cluster.sh` takes a fresh stack to a working platform; `smoke-test.sh` proves it. |
 
 ## Repositories in the ecosystem
 
@@ -15,7 +16,7 @@ Cross-cutting infrastructure for the Tech Challenge (Phase 4) — the pieces tha
 | [`work-order-service`](https://github.com/tech-challenge-workshop/work-order-service) | Work-order lifecycle, master data (customers/vehicles/services), saga orchestrator. |
 | [`execution-service`](https://github.com/tech-challenge-workshop/execution-service) | Parts inventory + execution queue + diagnostics. |
 | [`billing-service`](https://github.com/tech-challenge-workshop/billing-service) | Quote + payment (Mercado Pago). |
-| [`auth-service`](https://github.com/tech-challenge-workshop/auth-service) | Issues JWTs (CPF/CNPJ → customer; API key → admin). |
+| [`auth-service`](https://github.com/tech-challenge-workshop/auth-service) | Lambda that issues JWTs (CPF/CNPJ → customer; API key → admin). |
 | **`tech-platform`** (this repo) | Gateway, observability, Kubernetes and AWS infrastructure. |
 
 ## Local development
@@ -92,9 +93,11 @@ The complete saga walkthrough — seed data, open an order, approve the quote, r
 
 Same-shape tokens produced by hand (`{ iss: "auth-service", sub, role, exp }` signed HS256 with the shared secret) are accepted by Kong. The `auth-service` unit suite (30/30, 94.7% coverage) proves the service emits tokens with that exact shape.
 
-## Routing table (Kong → services)
+## Routing table (local compose)
 
-Declarative config in `local/kong/kong.yml`:
+Declarative config in `local/kong/kong.yml`. In the cluster the same paths are
+expressed as Ingress in `k8s/shared/kong/ingresses.yaml`, and `/auth` points at
+the Lambda instead of a local process:
 
 | Path | Method | Auth (Kong JWT plugin) | Upstream |
 |---|---|:---:|---|
@@ -121,23 +124,30 @@ Locally the secret is a literal in `kong.yml`. In the cluster it comes from a Ku
 
 ## Kubernetes
 
-`k8s/` renders to 26 resources through Kustomize:
+`k8s/` renders to **22 resources** through Kustomize:
 
 ```
 k8s/
 ├── namespaces/           tech-challenge namespace
-├── work-order-service/   Deployment, Service, ConfigMap, HPA, secret example
+├── work-order-service/   Deployment, Service, ConfigMap, HPA, migration Job
 ├── billing-service/      idem
-├── execution-service/    idem
-├── auth-service/         idem
+├── execution-service/    Deployment, Service, ConfigMap, HPA
+├── auth-service/         ExternalName only — the service is a Lambda
 └── shared/
-    ├── kong/             Helm values, Gateway, HTTPRoutes, KongPlugin, KongConsumer
-    └── datadog/          Helm values for the Datadog Agent DaemonSet
+    ├── kong/             Helm values, Ingresses, KongPlugins, KongConsumer
+    ├── datadog/          Helm values for the Agent
+    └── metrics-server/   why it is a prerequisite
 ```
 
-Each service gets a `Deployment` with liveness and readiness probes on `/health`, a `ClusterIP` `Service`, and an `HPA` scaling on CPU (70%) and memory (75%).
+Each of the three in-cluster services gets a `Deployment` with liveness and
+readiness probes on `/health`, a `ClusterIP` `Service`, and an `HPA` scaling on
+CPU (70%) and memory (75%).
 
-Routing uses the **Gateway API**: a `Gateway` named `kong` plus one `HTTPRoute` per exposure. Private routes carry `konghq.com/plugins: jwt-hs256,rate-limit-60rpm`; public ones (`/auth`, `/customers/lookup`, `/parts/prices`) carry no JWT plugin — the same split as the local `kong.yml`.
+Routing is **Ingress**, not Gateway API. The Kong controller accepted the
+GatewayClass but left every Gateway at `Waiting for controller`, with correct
+RBAC and no error in the logs; Ingress is KIC's primary mode and needs no extra
+CRDs. Private routes carry `konghq.com/plugins: jwt-hs256,rate-limit-60rpm`;
+the public ones carry no JWT plugin.
 
 Validate without a cluster:
 
@@ -146,7 +156,11 @@ kubectl kustomize k8s | kubeconform -summary -strict \
   -ignore-missing-schemas -schema-location default
 ```
 
-CI runs exactly that on every PR touching `k8s/`. Gateway API and Kong CRDs are reported as skipped: their schemas aren't in the default store.
+CI runs exactly that on every PR touching `k8s/`. Two Kong CRDs are reported as
+skipped: their schemas are not in the default store.
+
+> **metrics-server is a prerequisite.** EKS does not ship it, and without it
+> every HPA reports `cpu: <unknown>` and never scales.
 
 ### Deploy order
 
@@ -190,91 +204,19 @@ Two values the script cannot derive:
 | `MERCADO_PAGO_ACCESS_TOKEN` | export it before running the script; empty means the sandbox adapter auto-approves |
 | `DD_API_KEY` | **not a service secret** — it belongs to the Datadog Agent only (step 2 above). `dd-trace` in the apps ships to the Agent over `DD_AGENT_HOST`, so no application pod ever needs the key. Locally the same key goes in `local/.env`. |
 
-### DocumentDB TLS
+### Database TLS
 
-DocumentDB enforces TLS and presents an Amazon RDS CA that is not in the public
-trust store. The `execution-service` Deployment therefore runs an init container
-that downloads `global-bundle.pem` into an `emptyDir` mounted at
-`/etc/ssl/docdb`, and the connection URI points `tlsCAFile` at it. Keeping the
-bundle out of the service image means the same image still runs against a plain
-MongoDB container locally.
+RDS presents the Amazon RDS CA, which is not publicly trusted, so
+work-order-service and billing-service run an init container that downloads the
+bundle into `/etc/ssl/rds` and connect with `sslmode=verify-full`. Keeping it
+out of the images means the same image still runs against a plain PostgreSQL
+container locally.
 
-## Continuous deployment
-
-Each service repository deploys itself. After its image is pushed to GHCR, a
-`deploy` job assumes an AWS role through **GitHub OIDC** — no access key is
-stored anywhere — builds a kubeconfig and rolls out the image built by that
-exact run:
-
-```
-build + test + quality  →  docker push (main + short SHA)  →  kubectl set image + rollout status
-```
-
-The rollout is pinned to the **short commit SHA**, not to `main`. A mutable tag
-would make "redeploy the previous version" ambiguous; with an immutable tag the
-rollback target is exactly one commit. `rollout status` fails the job if the new
-pods never become ready, so a broken image surfaces in CI instead of sitting in
-`ImagePullBackOff`.
-
-### What each service repository needs
-
-Run once, after `tofu apply`:
-
-```bash
-ROLE=$(cd terraform && tofu output -raw github_actions_role_arn)
-for repo in work-order-service billing-service execution-service auth-service; do
-  gh secret set AWS_DEPLOY_ROLE_ARN --repo tech-challenge-workshop/$repo --body "$ROLE"
-done
-```
-
-| Name | Kind | Default if unset |
-| --- | --- | --- |
-| `AWS_DEPLOY_ROLE_ARN` | secret | deploy step is **skipped** |
-| `AWS_REGION` | variable | `us-east-1` |
-| `EKS_CLUSTER_NAME` | variable | `tech-challenge-dev-eks` |
-
-The deploy job skips itself when the secret is absent rather than failing. The
-cluster is created and destroyed around demos, so "no cluster right now" is a
-normal state and should not turn `main` red.
-
-### Why the role is narrow
-
-The trust policy only accepts tokens whose subject matches
-`repo:tech-challenge-workshop/<service>:ref:refs/heads/main` — a pull request
-from a fork cannot assume it, and neither can another repository. In AWS the
-role can do exactly one thing: `eks:DescribeCluster`. Everything else comes from
-an EKS access entry granting `AmazonEKSEditPolicy` **scoped to the
-`tech-challenge` namespace**, so the pipeline cannot touch the control plane,
-the Kong namespace or the Datadog agent.
-
-### Pulling the images
-
-The GHCR packages are **private**, so every pod needs a pull credential.
-`secrets-from-tofu.sh` builds it from `GHCR_PAT` — a classic GitHub token
-carrying **only** the `read:packages` scope, created at
-<https://github.com/settings/tokens/new>:
-
-```sh
-export GHCR_PAT=ghp_...
-k8s/secrets-from-tofu.sh
-kubectl apply -f k8s/ghcr-pull-secret.yaml
-```
-
-One `ghcr-pull` secret serves the namespace; all four Deployments reference it
-through `imagePullSecrets`. The token is cached in `k8s/.secrets.env` so reruns
-do not need it exported again.
-
-> **When the token expires**, every pod stops at `ImagePullBackOff` and the
-> deploy job fails at `rollout status`. The cause is not obvious from the pod
-> logs — they are empty, because no container ever started. Regenerate the
-> token, rerun the script, reapply the secret and restart the deployments.
-
-The scope is deliberately minimal: the cluster only ever pulls, never publishes.
-A leaked token lets someone download the images and nothing else.
+MongoDB Atlas needs none of this — it serves a publicly trusted certificate.
 
 ## AWS infrastructure
 
-`terraform/` is an OpenTofu stack built on `terraform-aws-modules/{vpc,eks,rds}`: a VPC across 2 AZs with one NAT gateway, EKS 1.35 with a SPOT node group, one RDS PostgreSQL instance per owning service, a DocumentDB cluster for execution-service, and an Amazon MQ RabbitMQ broker for the saga.
+`terraform/` is an OpenTofu stack built on `terraform-aws-modules/{vpc,eks,rds}`: a VPC across 2 AZs with one NAT gateway, EKS 1.35, one RDS PostgreSQL instance per owning service, and an Amazon MQ RabbitMQ broker for the saga. The document store is MongoDB Atlas, provisioned by the same stack — the AWS Free Plan refuses DocumentDB outright.
 
 Full detail, cost breakdown and the destroy-when-idle workflow are in [`terraform/README.md`](terraform/README.md).
 
@@ -291,8 +233,8 @@ The local compose is the dev-mode version of what runs on EKS. The conceptual st
 | Local | Cluster |
 |---|---|
 | Kong compose container | Kong Ingress Controller via the `kong/ingress` Helm chart |
-| declarative `kong.yml` | `HTTPRoute` + `KongPlugin` + `KongConsumer` (Gateway API + CRDs) |
+| declarative `kong.yml` | `Ingress` + `KongPlugin` + `KongConsumer` |
 | literal secret in yaml | `KongConsumer` credential referencing a Kubernetes `Secret` |
 | `host.docker.internal` | `ClusterIP` Services |
 | Datadog Agent container | Datadog Agent DaemonSet (official chart) |
-| Postgres / Mongo / RabbitMQ containers | RDS / DocumentDB / Amazon MQ |
+| Postgres / Mongo / RabbitMQ containers | RDS / MongoDB Atlas / Amazon MQ |

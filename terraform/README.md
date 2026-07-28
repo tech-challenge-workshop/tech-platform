@@ -13,13 +13,14 @@ differs (`tofu` instead of `terraform`).
 | Layer | Resource | Notes |
 | --- | --- | --- |
 | Network | VPC, 2 AZs, 6 subnets, 1 NAT gateway | public / private / database tiers |
-| Compute | EKS `1.35`, managed node group | 2–4 × `t3.medium` SPOT, AL2023 |
+| Compute | EKS `1.35`, managed node group | 2–4 × `c7i-flex.large` on demand, AL2023 |
 | Relational | 2 × RDS PostgreSQL `17.10` | `db.t4g.micro`, one per owning service |
-| Document | DocumentDB `5.0.1` | `db.t4g.medium`, single instance |
-| Messaging | Amazon MQ RabbitMQ `4.2` | `mq.t3.micro`, single instance |
-| Secrets | Secrets Manager | RDS passwords are RDS-managed; DocumentDB and MQ are generated here |
+| Document | MongoDB Atlas `M0` | free tier, one cluster |
+| Messaging | Amazon MQ RabbitMQ `4.2` | `mq.m7g.medium`, single instance |
+| Secrets | Secrets Manager | RDS passwords are RDS-managed; Atlas and MQ are generated here |
+| CI/CD | GitHub OIDC provider + deploy role | assumed by the pipelines, scoped to one namespace |
 
-`tofu plan` produces **85 resources**.
+`tofu plan` produces **91 resources**.
 
 ## Design decisions
 
@@ -45,7 +46,7 @@ DynamoDB lock table.
 
 **No secret in state as plaintext.** RDS uses `manage_master_user_password`, so
 the credential is created and rotated by RDS directly into Secrets Manager.
-DocumentDB and Amazon MQ have no such feature, so those two are generated with
+Atlas and Amazon MQ have no such feature, so those two are generated with
 `random_password` and written to Secrets Manager explicitly.
 
 ## Requirements
@@ -82,9 +83,9 @@ the stack stays up, not the monthly rate:
 make cost
 ```
 
-Roughly **$0.30/h**, dominated by the EKS control plane ($0.10/h) and
-DocumentDB ($0.078/h). A full test-and-record session of ~30 hours costs about
-$9. Left running for a month it would be ~$220 — so:
+Roughly **$0.43/h**, dominated by the two on-demand nodes ($0.17/h) and the EKS
+control plane ($0.10/h). A full test-and-record session of ~30 hours costs about
+$13. Left running for a month it would be ~$220 — so:
 
 ```sh
 make destroy
@@ -104,6 +105,7 @@ scratch: no final snapshots, no deletion protection, no backup retention on RDS.
 | `eks.tf` | cluster, addons, node group |
 | `security-groups.tf` | data-store ingress, all sourced from the node security group |
 | `rds.tf` | the two PostgreSQL instances |
-| `documentdb.tf` | DocumentDB cluster and its secret |
+| `mongodb-atlas.tf` | Atlas project, cluster, user, IP access list and secret |
+| `github-oidc.tf` | OIDC provider and the role the deploy pipelines assume |
 | `mq.tf` | RabbitMQ broker and its secret |
 | `outputs.tf` | endpoints and secret ARNs consumed by the K8s layer |

@@ -46,6 +46,19 @@ eligible and larger than the `t3.medium` that is not.
 
 ---
 
+## The short version
+
+Steps 4 to 9 are automated:
+
+```sh
+cd terraform && make apply
+../scripts/bootstrap-cluster.sh
+../scripts/smoke-test.sh          # 23 checks, end to end
+```
+
+The rest of this document explains what that script does and why each step is
+there — read it when something fails, not before.
+
 ## 1. State bucket — once per account
 
 ```sh
@@ -88,16 +101,11 @@ make kubeconfig
 kubectl get nodes     # expect 2 Ready
 ```
 
-## 4. Prerequisites the charts do not install
+## 4. The prerequisite the charts do not install
 
-Both are easy to forget and both fail confusingly.
+Easy to forget, and it fails quietly rather than loudly.
 
 ```sh
-# Gateway API CRDs — only needed if you route with Gateway API rather than
-# Ingress. This platform uses Ingress; see k8s/shared/kong/ingresses.yaml.
-kubectl apply -f https://github.com/kubernetes-sigs/gateway-api/releases/download/v1.2.1/standard-install.yaml
-
-# metrics-server — EKS does not ship it
 kubectl apply -f https://github.com/kubernetes-sigs/metrics-server/releases/download/v0.7.2/components.yaml
 ```
 
@@ -115,7 +123,6 @@ kubectl apply -f k8s/ghcr-pull-secret.yaml \
               -f k8s/work-order-service/secret.yaml \
               -f k8s/billing-service/secret.yaml \
               -f k8s/execution-service/secret.yaml \
-              -f k8s/auth-service/secret.yaml \
               -f k8s/shared/kong/kong-consumer.yaml
 ```
 
@@ -153,25 +160,24 @@ pod talks to the agent on its own node.
 
 ## 8. Database migrations
 
-The runtime images are slim — no Prisma CLI, no `migrations/` directory — so
-migrations cannot be run from a running pod.
+Run as a Kubernetes Job, from an image built off the `migrator` target — the
+runtime images are slim and carry neither the Prisma CLI nor `migrations/`.
 
-**This is a known gap:** it should be a Kubernetes Job, applied by the deploy
-pipeline and waited on before the rollout. Until that exists, tunnel to RDS and
-run them from the repository:
+The deploy pipeline recreates the Job against the image of that release and
+waits for it before rolling out, so a failed migration stops the release instead
+of following it. `bootstrap-cluster.sh` does the same for a fresh cluster, which
+has had no push to trigger a pipeline.
+
+By hand:
 
 ```sh
-EP=$(cd terraform && tofu output -json postgres_endpoints | jq -r '."work-order"')
-kubectl run rds-tunnel -n tech-challenge --image=alpine/socat --restart=Never -- \
-  tcp-listen:5432,fork,reuseaddr "tcp-connect:${EP}"
-kubectl port-forward -n tech-challenge pod/rds-tunnel 15432:5432 &
-
-# from work-order-service/, with the credentials from Secrets Manager
-DATABASE_URL="postgresql://USER:PASS@localhost:15432/workorder?sslmode=no-verify" \
-  npx prisma migrate deploy
+kubectl -n tech-challenge delete job work-order-service-migrate --ignore-not-found
+kubectl -n tech-challenge create -f k8s/work-order-service/migration-job.yaml
+kubectl -n tech-challenge wait --for=condition=complete job/work-order-service-migrate --timeout=5m
 ```
 
-Repeat for `billing`. Delete the tunnel pod afterwards.
+> Prisma 7 reads `datasource.url` from `prisma.config.ts`, so that file has to be
+> in the migrator image — `DATABASE_URL` alone is not enough.
 
 ## 9. Services
 
@@ -182,16 +188,27 @@ kubectl get pods -n tech-challenge -w
 
 ## 10. Deploy pipeline
 
+The three in-cluster services need the deploy role:
+
 ```sh
 ROLE=$(cd terraform && tofu output -raw github_actions_role_arn)
-for repo in work-order-service billing-service execution-service auth-service; do
+for repo in work-order-service billing-service execution-service; do
   gh secret set AWS_DEPLOY_ROLE_ARN --repo tech-challenge-workshop/$repo --body "$ROLE"
+  gh variable set EKS_CLUSTER_NAME --repo tech-challenge-workshop/$repo --body "tech-challenge-dev-eks"
+  gh variable set AWS_REGION --repo tech-challenge-workshop/$repo --body "us-east-1"
 done
 ```
 
-From then on a push to `main` builds, tests, pushes the image and rolls it out.
-Without the secret the deploy job skips itself, which keeps `main` green while
-no cluster exists.
+`auth-service` deploys a Lambda instead of a workload, so it needs a different
+set — see its README. Its pipeline runs `serverless deploy`, not `kubectl`.
+
+From then on a push to `main` builds, tests, pushes the image, runs the
+migration Job and rolls out. Without the secret the deploy job skips itself,
+which keeps `main` green while no cluster exists.
+
+> **Secrets are resolved when a run is created, not when a job starts.** A run
+> that began before the secret existed will never see it — trigger a new one.
+> Every workflow accepts `workflow_dispatch` for exactly this.
 
 ---
 
@@ -208,9 +225,14 @@ ADMIN=$(curl -s -X POST "http://$NLB/auth/admin" -H "X-Api-Key: $ADMIN_API_KEY" 
 curl -o /dev/null -w '%{http_code}\n' "http://$NLB/work-orders" -H "Authorization: Bearer $ADMIN"  # 200
 ```
 
-Then run a full work order through the gateway and check that it reaches
-`FINISHED`, that the quote is `APPROVED`, and that the part's reserved quantity
-went back to zero after consumption.
+Or run the whole thing:
+
+```sh
+./scripts/smoke-test.sh
+```
+
+23 checks: routing, edge authentication, role enforcement, a full saga, and the
+resulting state in RDS and Atlas. It is re-runnable and takes about 40 seconds.
 
 ---
 
@@ -241,7 +263,7 @@ images survive, so the next `apply` starts from step 2.
 | Kong install times out, controller `CrashLoopBackOff` | admin API disabled |
 | Controller `connection refused :8444` | admin listener had HTTP enabled instead of TLS |
 | `no matches for kind "HTTPRoute"` | Gateway API CRDs not installed |
-| Gateway stuck at `Waiting for controller` | never resolved; routing moved to Ingress |
+| Gateway stuck at `Waiting for controller` | never resolved; routing is Ingress now |
 | `ImagePullBackOff` on one service | its `imagePullSecrets` had been removed by an over-greedy edit |
 | `CrashLoopBackOff`, `Invalid URL at DATABASE_URL` | RDS password contained `#`; the connection string was not percent-encoded |
 | `self-signed certificate in certificate chain` | RDS presents the Amazon RDS CA; needs the bundle and `sslrootcert` |
