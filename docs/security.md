@@ -1,8 +1,8 @@
 # Vulnerability analysis
 
 Scans run on 2026-07-28 against the code and against the running environment.
-Findings are real, and the two open ones are listed with what we decided about
-them.
+Findings are real. Five open items are listed with what was decided about
+each.
 
 ## What was scanned, and how
 
@@ -36,12 +36,43 @@ authentication function as an edge component. Its 80% coverage gate still runs.
 
 ### Dependencies
 
-```
-work-order-service    no known vulnerabilities
-billing-service       no known vulnerabilities
-execution-service     no known vulnerabilities
-auth-service          no known vulnerabilities
-```
+The runtime images are built from production dependencies only — `pnpm prune
+--prod` in the Dockerfile, and an esbuild bundle for the Lambda — so a CVE in
+the build toolchain cannot reach a deployed artifact. The two scopes are
+reported separately because they mean different things.
+
+**What ships — clean, and gated in CI:**
+
+| Repository | Production dependencies |
+| --- | --- |
+| work-order-service | no known vulnerabilities |
+| billing-service | no known vulnerabilities |
+| execution-service | no known vulnerabilities |
+| auth-service | no known vulnerabilities |
+
+Getting there took four `pnpm` overrides. The first scan found **7
+vulnerabilities in the three microservices, 4 of them high**, all reaching
+production through one chain — `@prisma/client → prisma → @prisma/dev`:
+
+| Package | Severity | Issue | Pinned to |
+| --- | :---: | --- | --- |
+| `fast-uri` | high | host confusion via a literal | `>=3.1.4` |
+| `@hono/node-server` | moderate | middleware bypass via repeated headers | `>=2.0.5` |
+| `@hono/node-server` | moderate | path traversal | `>=2.0.5` |
+| `valibot` | moderate | `flatten()` throws on a `record()` issue path | `>=1.4.2` |
+| `brace-expansion` | high | denial of service via unbounded expansion | `>=5.0.8` |
+
+**Build toolchain — reported, not enforced:**
+
+`auth-service` carries **22 findings, 2 critical**, every one from the Serverless
+Framework v3 dependency tree (`decompress`, `tar` and others). None of them ship:
+the Lambda is an esbuild bundle of `src/` plus production dependencies, and
+`pnpm audit --prod` on that repository is clean.
+
+They cannot be fixed with an override — the fix is Serverless Framework v4,
+which is a migration rather than a version bump, and out of scope here.
+
+**Recorded as an open item, not as "no vulnerabilities".**
 
 ### OWASP ZAP baseline
 
@@ -140,9 +171,17 @@ access and is encrypted.
 
 ### A06 · Vulnerable and Outdated Components
 
-`pnpm audit` is clean across all four repositories. Dependencies are pinned and
-lock files committed. Renovate or Dependabot is **not** configured — a gap for a
-long-lived project, less so for one with a fixed delivery date.
+`pnpm audit --prod --audit-level=high` gates every pipeline, so a CVE in
+anything that ships stops the release. The first run found seven, four of them
+high; all are pinned out with overrides and the production trees are clean.
+
+The full audit runs alongside without blocking, so the build toolchain stays
+visible. `auth-service` has 22 findings there, 2 critical, all from Serverless
+Framework v3 and none of them shipped.
+
+Dependencies are pinned and lock files committed. Renovate or Dependabot is
+**not** configured — a gap for a long-lived project, less so for one with a
+fixed delivery date.
 
 ### A07 · Identification and Authentication Failures
 
@@ -203,11 +242,15 @@ it. Workloads sit in private subnets and leave through one NAT gateway.
 | 2 | `Server` header exposes the Kong version | Low | Accepted; suppress with `headers = off` before real exposure. |
 | 3 | No alert on authentication failures | Low | Worth adding to the Datadog stack — a 401 burst is the credential-stuffing signal. |
 | 4 | No automated dependency updates | Low | Renovate or Dependabot. Matters for a long-lived project. |
+| 5 | 22 CVEs in the Serverless Framework v3 toolchain, 2 critical | Low | None ship — the Lambda bundle carries production dependencies only. The fix is migrating to Serverless v4, out of scope here. |
 
 ## Reproducing
 
 ```sh
-# SCA
+# SCA — what ships (this is what CI gates on)
+pnpm audit --prod --audit-level=high
+
+# SCA — everything, including the build toolchain
 pnpm audit
 
 # DAST — against the live gateway
