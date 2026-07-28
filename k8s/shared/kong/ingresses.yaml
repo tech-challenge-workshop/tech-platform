@@ -16,6 +16,10 @@ metadata:
   namespace: tech-challenge
   annotations:
     konghq.com/strip-path: "false"
+    # The upstream is API Gateway, which rejects any Host that is not its own
+    # execute-api domain. Forwarding the NLB's hostname earns a 403 from AWS
+    # before the Lambda is ever invoked.
+    konghq.com/preserve-host: "false"
 spec:
   ingressClassName: kong
   rules:
@@ -27,7 +31,7 @@ spec:
               service:
                 name: auth-service
                 port:
-                  number: 3003
+                  number: 443
 ---
 # Called by auth-service before it issues a customer token, so it cannot itself
 # require a token. Returns existence only — no personal data.

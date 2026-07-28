@@ -1,14 +1,15 @@
 apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
-namespace: tech-challenge
+
+# auth-service is a Lambda, so there is no Deployment, Service, HPA or
+# ConfigMap here — only the ExternalName that lets Kong route /auth to the
+# API Gateway endpoint in front of it. See external-service.yaml.
 
 resources:
-  - configmap.yaml
-  - deployment.yaml
-  - service.yaml
-  - hpa.yaml
+  - external-service.yaml
 
 labels:
   - includeSelectors: false
     pairs:
+      app.kubernetes.io/name: auth-service
       app.kubernetes.io/part-of: tech-challenge

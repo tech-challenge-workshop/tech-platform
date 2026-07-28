@@ -1,0 +1,27 @@
+# auth-service runs as a Lambda, not in the cluster — the challenge asks for a
+# serverless authentication function, and the container that used to live here
+# was a workaround for a broken local emulator, never a deployment decision.
+#
+# Kong still owns the route, so /auth keeps the same public path and the same
+# gateway. This ExternalName service is what lets an Ingress point at the
+# API Gateway endpoint the Lambda sits behind.
+#
+# The host comes from `serverless deploy` output in the auth-service repo. It is
+# stable across deployments of the same stack — a new stack means a new host.
+apiVersion: v1
+kind: Service
+metadata:
+  name: auth-service
+  namespace: tech-challenge
+  annotations:
+    # The upstream is HTTPS, and API Gateway routes on the Host header, so Kong
+    # has to rewrite it instead of forwarding the NLB's.
+    konghq.com/protocol: https
+    konghq.com/host-header: b54ec26zxc.execute-api.us-east-1.amazonaws.com
+spec:
+  type: ExternalName
+  externalName: b54ec26zxc.execute-api.us-east-1.amazonaws.com
+  ports:
+    - name: https
+      port: 443
+      protocol: TCP
