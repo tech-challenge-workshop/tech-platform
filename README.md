@@ -8,6 +8,15 @@ Cross-cutting infrastructure for the Tech Challenge (Phase 4) — the pieces tha
 | `k8s/` | Kustomize manifest set for the services, the Kong ingresses and the Datadog Helm values. |
 | `terraform/` | OpenTofu stack provisioning the platform: VPC, EKS, RDS, Amazon MQ, MongoDB Atlas, and the GitHub OIDC deploy role. |
 | `scripts/` | `bootstrap-cluster.sh` takes a fresh stack to a working platform; `smoke-test.sh` proves it. |
+| `docs/` | Architecture and database diagrams, ADRs and RFCs. |
+
+## Documentation
+
+| Read | For |
+| --- | --- |
+| [docs/](docs/) | Component and sequence diagrams, ER diagrams, ADRs, RFCs |
+| [DEPLOY.md](DEPLOY.md) | Building or rebuilding the environment |
+| [DEMO.md](DEMO.md) | Walking the system as a user, or recording the demo |
 
 ## Repositories in the ecosystem
 
