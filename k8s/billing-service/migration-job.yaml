@@ -1,0 +1,65 @@
+# Schema migrations run as a Job, not as an init container: with an HPA there
+# would be one migration process per replica, all racing for the same advisory
+# lock. A Job runs exactly once per version and its failure is visible.
+#
+# The deploy pipeline deletes and recreates it, then waits for completion
+# before rolling out — a failed migration must stop the release, not follow it.
+#
+# The image is the `migrator` target: same build, but it keeps the Prisma CLI
+# and the migrations/ directory that the runtime stage drops.
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: billing-service-migrate
+  namespace: tech-challenge
+spec:
+  backoffLimit: 2
+  # Kept after completion so `kubectl logs job/...` still works when
+  # investigating a release.
+  ttlSecondsAfterFinished: 3600
+  template:
+    metadata:
+      labels:
+        app: billing-service-migrate
+    spec:
+      restartPolicy: Never
+      imagePullSecrets:
+        - name: ghcr-pull
+      # Same CA bundle the service uses: the migration connects to RDS over the
+      # same verify-full URL.
+      initContainers:
+        - name: fetch-rds-ca
+          image: curlimages/curl:8.11.1
+          command:
+            - sh
+            - -c
+            - >-
+              curl -fsSL --retry 3
+              https://truststore.pki.rds.amazonaws.com/global/global-bundle.pem
+              -o /etc/ssl/rds/global-bundle.pem
+          volumeMounts:
+            - name: rds-ca
+              mountPath: /etc/ssl/rds
+      containers:
+        - name: migrate
+          image: ghcr.io/tech-challenge-workshop/billing-service-migrator:main
+          env:
+            - name: DATABASE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: billing-service
+                  key: DATABASE_URL
+          volumeMounts:
+            - name: rds-ca
+              mountPath: /etc/ssl/rds
+              readOnly: true
+          resources:
+            requests:
+              cpu: 100m
+              memory: 256Mi
+            limits:
+              cpu: 500m
+              memory: 512Mi
+      volumes:
+        - name: rds-ca
+          emptyDir: {}
