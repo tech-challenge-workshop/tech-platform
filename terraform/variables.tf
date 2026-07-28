@@ -122,6 +122,29 @@ variable "rabbitmq_instance_type" {
   default     = "mq.t3.micro"
 }
 
+variable "github_org" {
+  description = "GitHub organisation that owns the service repositories"
+  type        = string
+  default     = "tech-challenge-workshop"
+}
+
+variable "github_deploy_repositories" {
+  description = "Repositories allowed to assume the deploy role, from their default branch only"
+  type        = list(string)
+  default = [
+    "work-order-service",
+    "billing-service",
+    "execution-service",
+    "auth-service",
+  ]
+}
+
+variable "application_namespace" {
+  description = "Kubernetes namespace the services run in, and the only one the deploy role may edit"
+  type        = string
+  default     = "tech-challenge"
+}
+
 variable "rabbitmq_username" {
   description = "Master username of the Amazon MQ RabbitMQ broker"
   type        = string

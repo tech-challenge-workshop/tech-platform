@@ -11,6 +11,25 @@ module "eks" {
   endpoint_private_access                  = true
   enable_cluster_creator_admin_permissions = true
 
+  # The deploy workflow gets edit rights on the application namespace only —
+  # enough for `kubectl set image` and `rollout status`, and nothing near the
+  # control plane or the other namespaces (kong, datadog, kube-system).
+  access_entries = {
+    github_actions = {
+      principal_arn = aws_iam_role.github_actions.arn
+
+      policy_associations = {
+        namespace_edit = {
+          policy_arn = "arn:aws:eks::aws:cluster-access-policy/AmazonEKSEditPolicy"
+          access_scope = {
+            type       = "namespace"
+            namespaces = [var.application_namespace]
+          }
+        }
+      }
+    }
+  }
+
   vpc_id     = module.vpc.vpc_id
   subnet_ids = module.vpc.private_subnets
 

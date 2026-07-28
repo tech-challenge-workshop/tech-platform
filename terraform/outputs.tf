@@ -23,6 +23,11 @@ output "kubeconfig_command" {
   value       = "aws eks update-kubeconfig --region ${var.region} --name ${module.eks.cluster_name}"
 }
 
+output "github_actions_role_arn" {
+  description = "Role the deploy workflows assume — set it as the AWS_DEPLOY_ROLE_ARN secret in each service repository"
+  value       = aws_iam_role.github_actions.arn
+}
+
 output "postgres_endpoints" {
   description = "Connection endpoint of each PostgreSQL instance, keyed by service"
   value       = { for k, m in module.postgres : k => m.db_instance_endpoint }

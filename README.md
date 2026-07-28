@@ -199,6 +199,62 @@ that downloads `global-bundle.pem` into an `emptyDir` mounted at
 bundle out of the service image means the same image still runs against a plain
 MongoDB container locally.
 
+## Continuous deployment
+
+Each service repository deploys itself. After its image is pushed to GHCR, a
+`deploy` job assumes an AWS role through **GitHub OIDC** — no access key is
+stored anywhere — builds a kubeconfig and rolls out the image built by that
+exact run:
+
+```
+build + test + quality  →  docker push (main + short SHA)  →  kubectl set image + rollout status
+```
+
+The rollout is pinned to the **short commit SHA**, not to `main`. A mutable tag
+would make "redeploy the previous version" ambiguous; with an immutable tag the
+rollback target is exactly one commit. `rollout status` fails the job if the new
+pods never become ready, so a broken image surfaces in CI instead of sitting in
+`ImagePullBackOff`.
+
+### What each service repository needs
+
+Run once, after `tofu apply`:
+
+```bash
+ROLE=$(cd terraform && tofu output -raw github_actions_role_arn)
+for repo in work-order-service billing-service execution-service auth-service; do
+  gh secret set AWS_DEPLOY_ROLE_ARN --repo tech-challenge-workshop/$repo --body "$ROLE"
+done
+```
+
+| Name | Kind | Default if unset |
+| --- | --- | --- |
+| `AWS_DEPLOY_ROLE_ARN` | secret | deploy step is **skipped** |
+| `AWS_REGION` | variable | `us-east-1` |
+| `EKS_CLUSTER_NAME` | variable | `tech-challenge-dev-eks` |
+
+The deploy job skips itself when the secret is absent rather than failing. The
+cluster is created and destroyed around demos, so "no cluster right now" is a
+normal state and should not turn `main` red.
+
+### Why the role is narrow
+
+The trust policy only accepts tokens whose subject matches
+`repo:tech-challenge-workshop/<service>:ref:refs/heads/main` — a pull request
+from a fork cannot assume it, and neither can another repository. In AWS the
+role can do exactly one thing: `eks:DescribeCluster`. Everything else comes from
+an EKS access entry granting `AmazonEKSEditPolicy` **scoped to the
+`tech-challenge` namespace**, so the pipeline cannot touch the control plane,
+the Kong namespace or the Datadog agent.
+
+### Making the images pullable
+
+The GHCR packages must be public, or the pods fail to pull. Set each one at
+[the organisation's packages page](https://github.com/orgs/tech-challenge-workshop/packages)
+→ *Package settings* → *Change visibility* → **Public**. The alternative is an
+`imagePullSecret` holding a personal access token, which expires and has to be
+rotated.
+
 ## AWS infrastructure
 
 `terraform/` is an OpenTofu stack built on `terraform-aws-modules/{vpc,eks,rds}`: a VPC across 2 AZs with one NAT gateway, EKS 1.35 with a SPOT node group, one RDS PostgreSQL instance per owning service, a DocumentDB cluster for execution-service, and an Amazon MQ RabbitMQ broker for the saga.
