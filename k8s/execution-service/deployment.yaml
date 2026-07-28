@@ -21,6 +21,29 @@ spec:
         tags.datadoghq.com/service: execution-service
         tags.datadoghq.com/env: production
     spec:
+      # DocumentDB requires TLS and presents an Amazon RDS CA that is not in the
+      # public trust store. Fetching the bundle here keeps it out of the service
+      # image, so the same image still runs against plain MongoDB locally.
+      initContainers:
+        - name: fetch-docdb-ca
+          image: curlimages/curl:8.11.1
+          command:
+            - sh
+            - -c
+            - >-
+              curl -fsSL --retry 3
+              https://truststore.pki.rds.amazonaws.com/global/global-bundle.pem
+              -o /etc/ssl/docdb/global-bundle.pem
+          volumeMounts:
+            - name: docdb-ca
+              mountPath: /etc/ssl/docdb
+          resources:
+            requests:
+              cpu: 10m
+              memory: 32Mi
+            limits:
+              cpu: 100m
+              memory: 64Mi
       containers:
         - name: app
           image: ghcr.io/tech-challenge-workshop/execution-service:main
@@ -33,6 +56,10 @@ spec:
                 name: execution-service
             - secretRef:
                 name: execution-service
+          volumeMounts:
+            - name: docdb-ca
+              mountPath: /etc/ssl/docdb
+              readOnly: true
           resources:
             requests:
               cpu: 200m
@@ -54,4 +81,7 @@ spec:
             initialDelaySeconds: 5
             periodSeconds: 5
             failureThreshold: 3
+      volumes:
+        - name: docdb-ca
+          emptyDir: {}
       restartPolicy: Always

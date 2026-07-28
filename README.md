@@ -152,18 +152,52 @@ CI runs exactly that on every PR touching `k8s/`. Gateway API and Kong CRDs are 
 
 ```bash
 # 1. cluster credentials
-cd terraform && make kubeconfig
+cd terraform && make kubeconfig && cd ..
 
 # 2. Kong Ingress Controller and the Datadog Agent (Helm)
+kubectl create namespace datadog
+kubectl create secret generic datadog-api --from-literal api-key="$DD_API_KEY" -n datadog
 helm install kong kong/ingress -n kong --create-namespace -f k8s/shared/kong/values.yaml
-helm install datadog datadog/datadog -n datadog --create-namespace -f k8s/shared/datadog/values.yaml
+helm install datadog datadog/datadog -n datadog -f k8s/shared/datadog/values.yaml
 
-# 3. real secrets (copy the *.example.yaml files, fill them in, apply)
-kubectl apply -f k8s/work-order-service/secret.yaml   # etc.
+# 3. render and apply the secrets (see below)
+k8s/secrets-from-tofu.sh
+kubectl apply -f k8s/work-order-service/secret.yaml \
+              -f k8s/billing-service/secret.yaml \
+              -f k8s/execution-service/secret.yaml \
+              -f k8s/auth-service/secret.yaml \
+              -f k8s/shared/kong/kong-consumer.yaml
 
 # 4. everything else
 kubectl apply -k k8s
 ```
+
+### Secrets
+
+`k8s/secrets-from-tofu.sh` renders every gitignored `secret.yaml` from the
+OpenTofu outputs. Database and broker credentials are read straight out of
+Secrets Manager, so no connection string is ever typed by hand.
+
+`JWT_SECRET` and `ADMIN_API_KEY` are generated on the first run and cached in
+`k8s/.secrets.env` (gitignored, mode 600). Reruns reuse them — rotating either
+would invalidate every issued token and desynchronise the Kong consumer
+credential at the same time.
+
+Two values the script cannot derive:
+
+| Value | Where it goes |
+|---|---|
+| `MERCADO_PAGO_ACCESS_TOKEN` | export it before running the script; empty means the sandbox adapter auto-approves |
+| `DD_API_KEY` | **not a service secret** — it belongs to the Datadog Agent only (step 2 above). `dd-trace` in the apps ships to the Agent over `DD_AGENT_HOST`, so no application pod ever needs the key. Locally the same key goes in `local/.env`. |
+
+### DocumentDB TLS
+
+DocumentDB enforces TLS and presents an Amazon RDS CA that is not in the public
+trust store. The `execution-service` Deployment therefore runs an init container
+that downloads `global-bundle.pem` into an `emptyDir` mounted at
+`/etc/ssl/docdb`, and the connection URI points `tlsCAFile` at it. Keeping the
+bundle out of the service image means the same image still runs against a plain
+MongoDB container locally.
 
 ## AWS infrastructure
 

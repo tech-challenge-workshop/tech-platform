@@ -63,6 +63,8 @@ resource "aws_secretsmanager_secret_version" "documentdb" {
     password = random_password.documentdb.result
     host     = aws_docdb_cluster.main.endpoint
     port     = aws_docdb_cluster.main.port
-    uri      = "mongodb://${aws_docdb_cluster.main.master_username}:${random_password.documentdb.result}@${aws_docdb_cluster.main.endpoint}:${aws_docdb_cluster.main.port}/execution?tls=true&replicaSet=rs0&retryWrites=false"
+    # tlsCAFile points at the bundle the execution-service pod's init container
+    # downloads: DocumentDB's CA is not in the public trust store.
+    uri = "mongodb://${aws_docdb_cluster.main.master_username}:${random_password.documentdb.result}@${aws_docdb_cluster.main.endpoint}:${aws_docdb_cluster.main.port}/execution?tls=true&tlsCAFile=/etc/ssl/docdb/global-bundle.pem&replicaSet=rs0&retryWrites=false&authSource=admin"
   })
 }

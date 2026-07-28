@@ -6,6 +6,7 @@
 # Real K8s secrets — only *.example.yaml is committed.
 k8s/**/secret.yaml
 k8s/**/kong-consumer.yaml
+k8s/.secrets.env
 
 # Terraform. The lock file IS committed, so providers stay pinned across machines.
 **/.terraform/*
