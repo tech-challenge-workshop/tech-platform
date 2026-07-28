@@ -1,5 +1,9 @@
 # Architecture documentation
 
+**[ENTREGA.md](ENTREGA.md)** — the delivery document for the portal, in Portuguese:
+participants, repository links, architecture, saga strategy and the reasoning
+behind the service split.
+
 | Document | Contents |
 | --- | --- |
 | [architecture.md](architecture.md) | Component diagram, sequence diagrams for authentication, opening a work order and compensation, and the deployment pipeline |
