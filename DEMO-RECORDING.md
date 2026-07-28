@@ -29,6 +29,9 @@ Datadog: save two searches under APM → Traces.
 | `Saga` | `env:production resource_name:"POST /work-orders"` |
 | `Errors` | `env:production status:error` |
 
+Both in the **Traces** view. Filtering on the entry resource is enough — health
+probes are never the root span of a work order, so they drop out on their own.
+
 Prepare a trivial commit but **do not push yet** — a comment or a version
 string in `work-order-service`.
 
@@ -37,19 +40,34 @@ string in `work-order-service`.
 | Window | Command | Position |
 | --- | --- | --- |
 | A | terminal, repo root | left half |
-| B | `kubectl logs -n tech-challenge -f deploy/work-order-service \| grep --line-buffered status_changed` | right half |
-| C | Postman | full screen, alternates with A+B |
-| D | `k9s -n tech-challenge` | full screen |
-| E | browser: GitHub Actions tab, Datadog APM tab | full screen |
+| B | `k9s -n tech-challenge`, showing the work-order-service log | right half |
+| C | Postman | left half, beside B |
+| D | browser: GitHub Actions tab, Datadog APM tab | full screen |
 
-Windows A and B stay side by side for the whole saga section. Do not use tabs —
+Postman and k9s stay side by side for the whole saga section. Do not use tabs —
 the saga completes in about two seconds and switching loses it.
+
+### k9s
+
+```sh
+k9s -n tech-challenge
+```
+
+| Key | Effect |
+| --- | --- |
+| `:po` ⏎ | pod list |
+| arrows | select `work-order-service-…` |
+| `l` | open its log — **stay here during the saga** |
+| `4` | tail the last lines |
+| `Esc` | back to the list |
+
+Switch to `:hpa` and `:deploy` only in the cluster section at the end.
 
 ---
 
 ## 0:00 — Push
 
-Window A:
+Terminal:
 
 ```sh
 git commit -am "demo: trigger pipeline" && git push
@@ -79,8 +97,7 @@ Point out: no password anywhere; the Lambda validates the document and calls
 
 Postman, folder `5 · Segurança`:
 
-1. **Sem token → 401** — rejected by Kong, never reaches a pod. Window B logs
-   nothing.
+1. **Sem token → 401** — rejected by Kong, never reaches a pod. k9s logs nothing.
 2. **Chave admin errada → 401**
 3. **Rota pública sem token → 200** — `/parts/prices`, service-to-service
 
@@ -101,11 +118,11 @@ different services, different databases.
 
 ## 4:00 — Saga, happy path
 
-**Windows A and B side by side. Postman on the left half instead of window A.**
+**Postman and k9s side by side, k9s showing the work-order-service log.**
 
 1. `3 · Saga completa → Abrir OS` → 201
 
-**Watch window B.** Within ~2 seconds, with no further commands:
+**Watch k9s.** Within ~2 seconds, with no further commands:
 
 ```
 work_order.status_changed  RECEIVED
@@ -120,12 +137,12 @@ work_order.status_changed  AWAITING_APPROVAL
 5. `5 · Segurança → Admin tentando aprovar → 403` — valid token, wrong role
 6. `3 · Saga → Aprovar orçamento (cliente)` → 201
 
-Window B: `IN_EXECUTION`
+k9s: `IN_EXECUTION`
 
 7. **Registrar diagnóstico** — free-form document
 8. **Iniciar reparo** → **Concluir reparo**
 
-Window B: `FINISHED`
+k9s: `FINISHED`
 
 9. **Consultar OS (final)** → five transitions in history
 10. **Consultar peça (consumida)** → `reservedQuantity` back to 0
@@ -136,11 +153,11 @@ Window B: `FINISHED`
 
 Postman, folder `4 · Compensação`:
 
-1. **Abrir segunda OS** → wait for `AWAITING_APPROVAL` in window B
+1. **Abrir segunda OS** → wait for `AWAITING_APPROVAL` in k9s
 2. **Aprovar orçamento (cliente)** → wait for `IN_EXECUTION`
 3. **Falhar reparo**
 
-Window B: the saga unwinds — payment refunded, quote cancelled, parts released,
+k9s: the saga unwinds — payment refunded, quote cancelled, parts released,
 `CANCELLED`.
 
 4. **Consultar OS (cancelada)**
@@ -150,8 +167,11 @@ Window B: the saga unwinds — payment refunded, quote cancelled, parts released
 
 ## 8:30 — Distributed trace
 
-Browser, Datadog APM → Traces → saved search `Saga`. Open the most recent
-trace, tab **Flame Graph**.
+Browser, Datadog APM → Traces. **Make sure the `Traces` toggle is selected, not
+`Spans`** — in Spans view each row is a single span; in Traces view each row is
+one complete distributed transaction.
+
+Saved search `Saga`. Open the most recent trace, tab **Flame Graph**.
 
 Point at, in order:
 
@@ -184,7 +204,7 @@ Inside `deploy`:
 - `Apply the schema migrations` — Job created and waited on
 - `Roll out the image built by this run` — `kubectl set image` with the short SHA
 
-Window A:
+Terminal:
 
 ```sh
 kubectl get deploy work-order-service -n tech-challenge \
@@ -198,9 +218,9 @@ The image tag matches the commit that was pushed at 0:00.
 
 ## 12:00 — Cluster
 
-Window D, k9s:
+k9s:
 
-- `:pods` — the four workloads, restarts at zero
+- `:po` — the three workloads, restarts at zero
 - `:hpa` — CPU and memory percentages against their targets
 - `:deploy` — replica counts
 
