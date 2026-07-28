@@ -1,0 +1,39 @@
+name: tofu-validate
+
+on:
+  push:
+    branches: [main]
+    paths: ['terraform/**']
+  pull_request:
+    paths: ['terraform/**']
+
+jobs:
+  fmt-and-validate:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: terraform
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: opentofu/setup-opentofu@v1
+        with:
+          tofu_version: 1.12.5
+          tofu_wrapper: false
+
+      - name: Check formatting
+        run: tofu fmt -recursive -check -diff
+
+      # No credentials and no state bucket needed: -backend=false resolves the
+      # modules and type-checks every argument without touching AWS.
+      - name: Init without backend
+        run: tofu init -backend=false -input=false
+
+      - name: Validate
+        run: tofu validate
+
+      - name: Validate bootstrap stack
+        working-directory: terraform/bootstrap
+        run: |
+          tofu init -backend=false -input=false
+          tofu validate

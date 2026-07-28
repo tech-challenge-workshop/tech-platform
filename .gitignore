@@ -6,3 +6,15 @@
 # Real K8s secrets — only *.example.yaml is committed.
 k8s/**/secret.yaml
 k8s/**/kong-consumer.yaml
+
+# Terraform. The lock file IS committed, so providers stay pinned across machines.
+**/.terraform/*
+*.tfstate
+*.tfstate.*
+crash.log
+crash.*.log
+tfplan
+override.tf
+override.tf.json
+*_override.tf
+*_override.tf.json
