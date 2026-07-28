@@ -1,0 +1,18 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: work-order-service
+  namespace: tech-challenge
+  labels:
+    app: work-order-service
+    app.kubernetes.io/name: work-order-service
+    app.kubernetes.io/part-of: tech-challenge
+spec:
+  type: ClusterIP
+  selector:
+    app: work-order-service
+  ports:
+    - name: http
+      port: 3000
+      targetPort: http
+      protocol: TCP

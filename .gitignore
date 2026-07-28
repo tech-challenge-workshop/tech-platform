@@ -2,3 +2,7 @@
 .env.local
 *.log
 .DS_Store
+
+# Real K8s secrets — only *.example.yaml is committed.
+k8s/**/secret.yaml
+k8s/**/kong-consumer.yaml

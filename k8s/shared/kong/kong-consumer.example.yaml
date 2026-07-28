@@ -1,0 +1,32 @@
+# Template — do NOT commit the real secret.
+# Copy to kong-consumer.yaml (gitignored), fill JWT_SECRET, apply:
+#   kubectl apply -f kong-consumer.yaml
+#
+# The `kongCredType: jwt` secret is what Kong reads to validate incoming JWTs.
+# `key` must match the `iss` claim signed by auth-service (currently "auth-service").
+# `secret` must equal the JWT_SECRET used by the four services.
+
+apiVersion: v1
+kind: Secret
+metadata:
+  name: auth-service-jwt
+  namespace: tech-challenge
+  labels:
+    konghq.com/credential: jwt
+type: Opaque
+stringData:
+  kongCredType: jwt
+  key: auth-service
+  algorithm: HS256
+  secret: CHANGE_ME                # same value as every service's JWT_SECRET
+---
+apiVersion: configuration.konghq.com/v1
+kind: KongConsumer
+metadata:
+  name: auth-service
+  namespace: tech-challenge
+  annotations:
+    kubernetes.io/ingress.class: kong
+username: auth-service
+credentials:
+  - auth-service-jwt

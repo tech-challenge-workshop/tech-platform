@@ -1,0 +1,37 @@
+# Helm values for the datadog/datadog chart.
+# Install with:
+#   helm repo add datadog https://helm.datadoghq.com && helm repo update
+#   kubectl create namespace datadog
+#   kubectl create secret generic datadog-api --from-literal api-key="$DD_API_KEY" -n datadog
+#   helm install datadog datadog/datadog -n datadog -f values.yaml
+#
+# Deploys the agent as a DaemonSet (one pod per node) so services can send
+# APM/traces/metrics to the local node via DD_AGENT_HOST (set in each
+# service's ConfigMap to datadog-agent.datadog.svc.cluster.local).
+
+targetSystem: "linux"
+
+datadog:
+  apiKeyExistingSecret: datadog-api
+  site: datadoghq.com
+  clusterName: tech-challenge
+  tags:
+    - "env:production"
+    - "part-of:tech-challenge"
+
+  apm:
+    portEnabled: true              # port 8126 for traces
+  dogstatsd:
+    port: 8125                     # udp for metrics
+    nonLocalTraffic: true
+  logs:
+    enabled: true
+    containerCollectAll: true      # collect all container stdout as logs
+  processAgent:
+    enabled: true
+
+agents:
+  enabled: true                    # DaemonSet
+clusterAgent:
+  enabled: true                    # cluster-wide checks + metadata
+  replicas: 1

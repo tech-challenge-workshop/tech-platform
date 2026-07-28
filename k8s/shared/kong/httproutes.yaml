@@ -1,0 +1,120 @@
+# HTTPRoute per service — parentRef always points to the Gateway "kong" in
+# namespace "kong". Routes annotated with `konghq.com/plugins: jwt-hs256` are
+# validated by the JWT plugin at the edge; the ones without run public.
+# Nest guards in each service continue to validate the token (defence in depth).
+
+# ─── auth-service (both routes public) ──────────────────────────────────────
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: auth-public
+  namespace: tech-challenge
+spec:
+  parentRefs:
+    - name: kong
+      namespace: kong
+  rules:
+    - matches:
+        - path: { type: Exact, value: /auth }
+          method: POST
+        - path: { type: Exact, value: /auth/admin }
+          method: POST
+      backendRefs:
+        - name: auth-service
+          port: 3003
+---
+# ─── work-order-service ─────────────────────────────────────────────────────
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: work-order-public
+  namespace: tech-challenge
+spec:
+  parentRefs:
+    - name: kong
+      namespace: kong
+  rules:
+    - matches:
+        - path: { type: Exact, value: /customers/lookup }
+          method: GET
+      backendRefs:
+        - name: work-order-service
+          port: 3000
+---
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: work-order-private
+  namespace: tech-challenge
+  annotations:
+    konghq.com/plugins: jwt-hs256,rate-limit-60rpm
+spec:
+  parentRefs:
+    - name: kong
+      namespace: kong
+  rules:
+    - matches:
+        - path: { type: PathPrefix, value: /customers }
+        - path: { type: PathPrefix, value: /vehicles }
+        - path: { type: PathPrefix, value: /repair-services }
+        - path: { type: PathPrefix, value: /work-orders }
+      backendRefs:
+        - name: work-order-service
+          port: 3000
+---
+# ─── execution-service ──────────────────────────────────────────────────────
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: execution-public
+  namespace: tech-challenge
+spec:
+  parentRefs:
+    - name: kong
+      namespace: kong
+  rules:
+    - matches:
+        - path: { type: Exact, value: /parts/prices }
+          method: GET
+      backendRefs:
+        - name: execution-service
+          port: 3002
+---
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: execution-private
+  namespace: tech-challenge
+  annotations:
+    konghq.com/plugins: jwt-hs256,rate-limit-60rpm
+spec:
+  parentRefs:
+    - name: kong
+      namespace: kong
+  rules:
+    - matches:
+        - path: { type: PathPrefix, value: /parts }
+        - path: { type: PathPrefix, value: /executions }
+      backendRefs:
+        - name: execution-service
+          port: 3002
+---
+# ─── billing-service (all routes JWT-protected) ─────────────────────────────
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: billing-private
+  namespace: tech-challenge
+  annotations:
+    konghq.com/plugins: jwt-hs256,rate-limit-60rpm
+spec:
+  parentRefs:
+    - name: kong
+      namespace: kong
+  rules:
+    - matches:
+        - path: { type: PathPrefix, value: /quotes }
+        - path: { type: PathPrefix, value: /payments }
+      backendRefs:
+        - name: billing-service
+          port: 3001

@@ -1,0 +1,13 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: billing-service
+  namespace: tech-challenge
+data:
+  NODE_ENV: production
+  PORT: "3001"
+  RABBITMQ_QUEUE: billing_queue
+  DD_SERVICE: billing-service
+  DD_ENV: production
+  DD_SITE: datadoghq.com
+  DD_AGENT_HOST: datadog-agent.datadog.svc.cluster.local

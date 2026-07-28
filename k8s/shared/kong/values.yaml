@@ -1,0 +1,32 @@
+# Helm values for the kong/ingress chart (bundles Kong Gateway + KIC).
+# Install with:
+#   helm repo add kong https://charts.konghq.com && helm repo update
+#   helm install kong kong/ingress -n kong --create-namespace -f values.yaml
+#
+# On EKS the LoadBalancer service provisions an NLB automatically.
+
+gateway:
+  env:
+    database: "off"                # DB-less, config comes from CRDs (KIC)
+  proxy:
+    enabled: true
+    type: LoadBalancer
+    annotations:
+      service.beta.kubernetes.io/aws-load-balancer-type: nlb
+      service.beta.kubernetes.io/aws-load-balancer-scheme: internet-facing
+    http:
+      enabled: true
+      servicePort: 80
+    tls:
+      enabled: true
+      servicePort: 443
+  admin:
+    enabled: false                 # never expose the admin API to the internet
+
+ingressController:
+  enabled: true
+  ingressClass: kong
+  installCRDs: false
+  gatewayDiscovery:
+    enabled: true
+    generateAdminApiService: true

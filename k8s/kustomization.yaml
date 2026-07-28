@@ -1,0 +1,22 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+# Root — applies namespace + every service + shared Kong Gateway API resources.
+# Deploys with:
+#   kubectl apply -k .
+#
+# Prerequisites (see shared/*/values.yaml + README.md for install commands):
+#   - Kong Ingress Controller (Helm chart `kong/ingress`) in ns `kong`
+#   - Datadog Agent (Helm chart `datadog/datadog`) in ns `datadog`
+#   - Postgres/MongoDB/RabbitMQ backing services (RDS/DocumentDB/Amazon MQ
+#     provisioned via Terraform, or in-cluster charts for a quick dev cluster)
+#   - Per-service Secret resources created from secret.example.yaml (never
+#     committed with real values)
+
+resources:
+  - namespaces/tech-challenge.yaml
+  - shared/kong
+  - work-order-service
+  - execution-service
+  - billing-service
+  - auth-service

@@ -1,0 +1,22 @@
+# KongPlugin CRs applied per HTTPRoute via the konghq.com/plugins annotation.
+# Same JWT config as tech-platform/local/kong/kong.yml — Kong resolves the
+# KongConsumer by matching the `iss` claim (default key_claim_name is `iss`).
+
+apiVersion: configuration.konghq.com/v1
+kind: KongPlugin
+metadata:
+  name: jwt-hs256
+  namespace: tech-challenge
+plugin: jwt
+config:
+  claims_to_verify: ["exp"]
+---
+apiVersion: configuration.konghq.com/v1
+kind: KongPlugin
+metadata:
+  name: rate-limit-60rpm
+  namespace: tech-challenge
+plugin: rate-limiting
+config:
+  minute: 60
+  policy: local

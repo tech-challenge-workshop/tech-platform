@@ -1,0 +1,14 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: work-order-service
+  namespace: tech-challenge
+data:
+  NODE_ENV: production
+  PORT: "3000"
+  RABBITMQ_QUEUE: work_order_queue
+  EXECUTION_SERVICE_URL: http://execution-service:3002
+  DD_SERVICE: work-order-service
+  DD_ENV: production
+  DD_SITE: datadoghq.com
+  DD_AGENT_HOST: datadog-agent.datadog.svc.cluster.local
