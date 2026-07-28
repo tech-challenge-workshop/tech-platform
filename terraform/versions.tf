@@ -11,6 +11,10 @@ terraform {
       source  = "hashicorp/random"
       version = "~> 3.6"
     }
+    mongodbatlas = {
+      source  = "mongodb/mongodbatlas"
+      version = "~> 1.30"
+    }
     tls = {
       source  = "hashicorp/tls"
       version = "~> 4.0"

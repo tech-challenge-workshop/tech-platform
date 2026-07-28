@@ -23,7 +23,7 @@ variable "az_count" {
 
   validation {
     condition     = var.az_count >= 2
-    error_message = "EKS, RDS and DocumentDB all require at least two availability zones."
+    error_message = "EKS and RDS both require at least two availability zones."
   }
 }
 
@@ -39,16 +39,23 @@ variable "kubernetes_version" {
   default     = "1.35"
 }
 
+# The account is on the AWS Free Plan, which refuses any instance type outside
+# the free-tier-eligible list — the node group hangs with "The specified
+# instance type is not eligible for Free Tier" and never launches. Check the
+# current list with:
+#   aws ec2 describe-instance-types --filters Name=free-tier-eligible,Values=true
 variable "node_instance_types" {
-  description = "Instance types the managed node group may pick from"
+  description = "Instance types the managed node group may pick from; must be free-tier eligible on the Free Plan"
   type        = list(string)
-  default     = ["t3.medium", "t3a.medium"]
+  default     = ["c7i-flex.large", "m7i-flex.large"]
 }
 
 variable "node_capacity_type" {
   description = "ON_DEMAND or SPOT for the managed node group"
   type        = string
-  default     = "SPOT"
+  # Spot on the flex families reported UnfulfillableCapacity alongside the
+  # free-tier rejection, so the demo does not depend on spare capacity.
+  default = "ON_DEMAND"
 
   validation {
     condition     = contains(["ON_DEMAND", "SPOT"], var.node_capacity_type)
@@ -92,22 +99,22 @@ variable "postgres_allocated_storage" {
   default     = 20
 }
 
-variable "documentdb_version" {
-  description = "DocumentDB engine version (MongoDB-compatible API)"
+variable "mongodbatlas_org_id" {
+  description = "MongoDB Atlas organisation that owns the project"
   type        = string
-  default     = "5.0.1"
+  default     = "6a68cdb1beb3f137a7941efb"
 }
 
-variable "documentdb_instance_class" {
-  description = "Instance class for the DocumentDB cluster instances"
+variable "mongodbatlas_cluster_name" {
+  description = "Name of the Atlas cluster; M0 allows exactly one per project"
   type        = string
-  default     = "db.t4g.medium"
+  default     = "tech-challenge"
 }
 
-variable "documentdb_instance_count" {
-  description = "Number of instances in the DocumentDB cluster"
-  type        = number
-  default     = 1
+variable "mongodbatlas_region" {
+  description = "Atlas region, in Atlas notation — kept in the same AWS region as the cluster"
+  type        = string
+  default     = "US_EAST_1"
 }
 
 variable "rabbitmq_version" {
@@ -116,10 +123,14 @@ variable "rabbitmq_version" {
   default     = "4.2"
 }
 
+# RabbitMQ on Amazon MQ does not accept mq.t3.micro — that size is ActiveMQ
+# only, which is why the free tier never covered a managed RabbitMQ. m7g.medium
+# is the smallest the engine supports:
+#   aws mq describe-broker-instance-options --engine-type RABBITMQ
 variable "rabbitmq_instance_type" {
-  description = "Amazon MQ broker host instance type"
+  description = "Amazon MQ broker host instance type; RabbitMQ's smallest is mq.m7g.medium"
   type        = string
-  default     = "mq.t3.micro"
+  default     = "mq.m7g.medium"
 }
 
 variable "github_org" {

@@ -1,0 +1,172 @@
+# Routing through Kong, expressed as Ingress rather than Gateway API.
+#
+# Gateway API was the first attempt and it did not reconcile: the Kong
+# controller accepted the GatewayClass but left every Gateway at "Waiting for
+# controller", with correct RBAC, a correct publish service and no error in the
+# logs. Ingress is KIC's primary mode, needs no extra CRDs, and expresses the
+# same path-based routing — so the routing model was not worth the debugging.
+#
+# Paths are NOT stripped: the services expect the full path they publish.
+# Plugins are attached per Ingress through konghq.com/plugins.
+
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: auth-public
+  namespace: tech-challenge
+  annotations:
+    konghq.com/strip-path: "false"
+spec:
+  ingressClassName: kong
+  rules:
+    - http:
+        paths:
+          - path: /auth
+            pathType: Prefix
+            backend:
+              service:
+                name: auth-service
+                port:
+                  number: 3003
+---
+# Called by auth-service before it issues a customer token, so it cannot itself
+# require a token. Returns existence only — no personal data.
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: work-order-public
+  namespace: tech-challenge
+  annotations:
+    konghq.com/strip-path: "false"
+spec:
+  ingressClassName: kong
+  rules:
+    - http:
+        paths:
+          - path: /customers/lookup
+            pathType: Prefix
+            backend:
+              service:
+                name: work-order-service
+                port:
+                  number: 3000
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: work-order-private
+  namespace: tech-challenge
+  annotations:
+    konghq.com/strip-path: "false"
+    konghq.com/plugins: jwt-hs256,rate-limit-60rpm
+spec:
+  ingressClassName: kong
+  rules:
+    - http:
+        paths:
+          - path: /customers
+            pathType: Prefix
+            backend:
+              service:
+                name: work-order-service
+                port:
+                  number: 3000
+          - path: /vehicles
+            pathType: Prefix
+            backend:
+              service:
+                name: work-order-service
+                port:
+                  number: 3000
+          - path: /repair-services
+            pathType: Prefix
+            backend:
+              service:
+                name: work-order-service
+                port:
+                  number: 3000
+          - path: /work-orders
+            pathType: Prefix
+            backend:
+              service:
+                name: work-order-service
+                port:
+                  number: 3000
+---
+# Service-to-service price snapshot, called while opening a work order before
+# any user token exists in that flow. Prices only, no stock levels.
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: execution-public
+  namespace: tech-challenge
+  annotations:
+    konghq.com/strip-path: "false"
+spec:
+  ingressClassName: kong
+  rules:
+    - http:
+        paths:
+          - path: /parts/prices
+            pathType: Prefix
+            backend:
+              service:
+                name: execution-service
+                port:
+                  number: 3002
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: execution-private
+  namespace: tech-challenge
+  annotations:
+    konghq.com/strip-path: "false"
+    konghq.com/plugins: jwt-hs256,rate-limit-60rpm
+spec:
+  ingressClassName: kong
+  rules:
+    - http:
+        paths:
+          - path: /parts
+            pathType: Prefix
+            backend:
+              service:
+                name: execution-service
+                port:
+                  number: 3002
+          - path: /executions
+            pathType: Prefix
+            backend:
+              service:
+                name: execution-service
+                port:
+                  number: 3002
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: billing-private
+  namespace: tech-challenge
+  annotations:
+    konghq.com/strip-path: "false"
+    konghq.com/plugins: jwt-hs256,rate-limit-60rpm
+spec:
+  ingressClassName: kong
+  rules:
+    - http:
+        paths:
+          - path: /quotes
+            pathType: Prefix
+            backend:
+              service:
+                name: billing-service
+                port:
+                  number: 3001
+          - path: /payments
+            pathType: Prefix
+            backend:
+              service:
+                name: billing-service
+                port:
+                  number: 3001

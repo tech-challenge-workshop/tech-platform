@@ -2,12 +2,11 @@ apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
 
 # Kong Gateway + KIC are installed via Helm chart (see values.yaml + README).
-# The declarative resources below live in the tech-challenge namespace and
-# reference the Gateway created in the kong namespace.
+# Routing is expressed as Ingress — see the note at the top of ingresses.yaml
+# for why Gateway API was abandoned.
 
 resources:
-  - gateway.yaml
+  - ingresses.yaml
   - kong-plugins.yaml
-  - httproutes.yaml
   # kong-consumer.example.yaml is NOT listed on purpose — copy to
   # kong-consumer.yaml (gitignored), fill JWT_SECRET, apply manually.

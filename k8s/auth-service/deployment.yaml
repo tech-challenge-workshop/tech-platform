@@ -32,6 +32,11 @@ spec:
           ports:
             - name: http
               containerPort: 3003
+          env:
+            - name: DD_AGENT_HOST
+              valueFrom:
+                fieldRef:
+                  fieldPath: status.hostIP
           envFrom:
             - configMapRef:
                 name: auth-service

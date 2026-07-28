@@ -20,8 +20,22 @@ gateway:
     tls:
       enabled: true
       servicePort: 443
+  # The controller pushes configuration through the admin API, so it has to be
+  # enabled — disabling it deadlocks the install: the gateway never turns Ready
+  # without config, and the controller never finds an endpoint to send it to.
+  # Keeping it a headless ClusterIP is what stops it reaching the internet;
+  # only the proxy above gets a LoadBalancer.
+  # The controller reaches the admin API over TLS on 8444, so the plain HTTP
+  # listener stays off — enabling only http makes it fail with connection
+  # refused on 8444.
   admin:
-    enabled: false                 # never expose the admin API to the internet
+    enabled: true
+    type: ClusterIP
+    clusterIP: None
+    http:
+      enabled: false
+    tls:
+      enabled: true
 
 ingressController:
   enabled: true

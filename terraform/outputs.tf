@@ -38,14 +38,9 @@ output "postgres_secret_arns" {
   value       = { for k, m in module.postgres : k => m.db_instance_master_user_secret_arn }
 }
 
-output "documentdb_endpoint" {
-  description = "Cluster endpoint of the DocumentDB cluster"
-  value       = aws_docdb_cluster.main.endpoint
-}
-
-output "documentdb_secret_arn" {
-  description = "Secrets Manager ARN holding the DocumentDB credentials and connection URI"
-  value       = aws_secretsmanager_secret.documentdb.arn
+output "mongodbatlas_secret_arn" {
+  description = "Secrets Manager ARN holding the Atlas credentials and connection URI"
+  value       = aws_secretsmanager_secret.mongodbatlas.arn
 }
 
 output "rabbitmq_endpoint" {

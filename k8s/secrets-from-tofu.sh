@@ -87,7 +87,12 @@ fi
 echo "reading OpenTofu outputs..."
 
 RABBITMQ_URL="$(secret_json "$(tofu_out rabbitmq_secret_arn)" | jq -r .uri)"
-MONGODB_URL="$(secret_json "$(tofu_out documentdb_secret_arn)" | jq -r .uri)"
+MONGODB_URL="$(secret_json "$(tofu_out mongodbatlas_secret_arn)" | jq -r .uri)"
+
+# RDS generates master passwords containing characters that are reserved in a
+# URL — '#' alone truncates everything after it into a fragment — so both parts
+# of the userinfo are percent-encoded before being spliced in.
+urlencode() { jq -sRr @uri; }
 
 pg_url() {
   local service="$1" database="$2"
@@ -95,9 +100,11 @@ pg_url() {
   endpoint="$(tofu_json postgres_endpoints | jq -r --arg s "$service" '.[$s]')"
   arn="$(tofu_json postgres_secret_arns | jq -r --arg s "$service" '.[$s]')"
   creds="$(secret_json "$arn")"
-  user="$(jq -r .username <<<"$creds")"
-  pass="$(jq -r .password <<<"$creds")"
-  printf 'postgresql://%s:%s@%s/%s?schema=public&sslmode=require' \
+  user="$(jq -r .username <<<"$creds" | tr -d '\n' | urlencode)"
+  pass="$(jq -r .password <<<"$creds" | tr -d '\n' | urlencode)"
+  # verify-full with the Amazon RDS bundle the init container fetches: plain
+  # sslmode=require still validates the chain and fails on the RDS CA.
+  printf 'postgresql://%s:%s@%s/%s?schema=public&sslmode=verify-full&sslrootcert=/etc/ssl/rds/global-bundle.pem' \
     "$user" "$pass" "$endpoint" "$database"
 }
 
