@@ -11,6 +11,7 @@ output "monitor_ids" {
   description = "IDs of the created monitors"
   value = {
     error_rate         = { for k, m in datadog_monitor.service_error_rate : k => m.id }
+    uptime             = { for k, m in datadog_monitor.service_uptime : k => m.id }
     saga_compensations = datadog_monitor.saga_compensations.id
   }
 }

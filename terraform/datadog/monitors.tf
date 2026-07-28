@@ -43,6 +43,43 @@ resource "datadog_monitor" "service_error_rate" {
   tags = ["project:tech-challenge", "env:${var.env}", "service:${each.value}"]
 }
 
+# REQUISITOS §3.8 lists "healthchecks e uptime" alongside latency and resource
+# usage. A pod that is running but failing its readiness probe serves no
+# traffic, which the error-rate monitor above cannot see.
+resource "datadog_monitor" "service_uptime" {
+  for_each = toset(var.services)
+
+  name = "[${var.env}] ${each.value} has no healthy pod"
+  type = "metric alert"
+
+  query = "max(last_5m):max:kubernetes_state.deployment.replicas_available{env:${var.env},kube_deployment:${each.value}} < 1"
+
+  message = <<-EOT
+    {{#is_alert}}
+    `${each.value}` has no available replica — every pod is failing its readiness probe on `/health`, or none could be scheduled.
+
+    Requests routed to it through Kong are failing. Check the pod events and the container logs.
+    {{/is_alert}}
+    {{#is_recovery}}
+    `${each.value}` has healthy pods again.
+    {{/is_recovery}}${local.notify}
+  EOT
+
+  monitor_thresholds {
+    critical = 1
+  }
+
+  require_full_window = false
+
+  # Unlike the other two, absence of data here IS the incident: no deployment
+  # metric means the workload is gone, not idle.
+  notify_no_data    = true
+  no_data_timeframe = 10
+  renotify_interval = 30
+
+  tags = ["project:tech-challenge", "env:${var.env}", "service:${each.value}"]
+}
+
 resource "datadog_monitor" "saga_compensations" {
   name = "[${var.env}] Work orders being cancelled by saga compensation"
   type = "query alert"

@@ -22,7 +22,16 @@ and destroyed on its own, independently of the cluster's lifecycle.
 | Monitor | Fires when |
 | --- | --- |
 | Error rate (one per service) | More than 5% of requests fail over 5 minutes |
+| Uptime (one per service) | The deployment has no available replica for 5 minutes |
 | Saga compensations | More than 3 work orders are cancelled in 15 minutes |
+
+The uptime monitor covers the "healthchecks e uptime" item the requirements
+list separately from latency: a pod can be running and still serve nothing if
+its readiness probe fails, which the error-rate monitor never sees because no
+request reaches it. It is also the only one with `notify_no_data` enabled —
+absence of the deployment metric means the workload is gone, not idle. It
+depends on `kubernetes_state` metrics, so it only reports once the cluster
+exists.
 
 Cancellation is the saga's compensation path, so the second monitor is the
 business-level signal that orders are failing between parts reservation, quote
