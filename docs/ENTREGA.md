@@ -35,7 +35,8 @@ automáticas.
 
 ## Vídeo
 
-`[LINK DO VÍDEO]` — até 15 minutos.
+https://drive.google.com/file/d/1Q4gWLIs1KPznCwKWOvOVCcGpwN4EYqug/view?usp=drive_link — até 15 minutos.
+*Foi necessário subir o vídeo no drive, pois o YouTube não aceitou devido ao tamanho.*
 
 ---
 
