@@ -1,7 +1,7 @@
 {
   "info": {
     "name": "Tech Challenge — Oficina",
-    "description": "Every request goes through Kong. Nothing talks to a service directly.\n\nRun the folders in order: **1 Auth** issues the tokens the rest need, **2 Catálogo** seeds data and stores the ids, **3 Saga** runs a work order end to end, **4 Segurança** shows what the gateway and the guards reject.\n\nIds and tokens are captured automatically into collection variables — you should not have to copy anything by hand.\n\nSwitch `baseUrl` to `http://localhost:8000` to run against the local compose.",
+    "description": "Every request goes through Kong. Nothing talks to a service directly.\n\n**Pastas 1 a 5 — o percurso da demonstração.** Rode em ordem: **1 Auth** emite os tokens que o resto usa, **2 Catálogo** cadastra os dados e guarda os ids, **3 Saga** roda uma OS de ponta a ponta, **4 Compensação** mostra o caminho de falha, **5 Segurança** mostra o que o gateway e os guards recusam.\n\n**Pastas 6 a 13 — referência completa.** Todas as rotas expostas pelos quatro serviços, agrupadas por recurso. Dependem dos ids capturados nas pastas 1 e 2.\n\nIds e tokens são capturados automaticamente em variáveis de coleção — você não deve precisar copiar nada à mão.\n\nTroque `baseUrl` para `http://localhost:8000` para rodar contra o compose local.",
     "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
   },
   "variable": [
@@ -56,6 +56,24 @@
       "key": "workOrderId",
       "value": "",
       "type": "string"
+    },
+    {
+      "key": "workOrderLocalUrl",
+      "value": "http://localhost:3000",
+      "type": "string",
+      "description": "kubectl port-forward -n tech-challenge svc/work-order-service 3000:3000"
+    },
+    {
+      "key": "billingLocalUrl",
+      "value": "http://localhost:3001",
+      "type": "string",
+      "description": "kubectl port-forward -n tech-challenge svc/billing-service 3001:3001"
+    },
+    {
+      "key": "executionLocalUrl",
+      "value": "http://localhost:3002",
+      "type": "string",
+      "description": "kubectl port-forward -n tech-challenge svc/execution-service 3002:3002"
     }
   ],
   "item": [
@@ -860,6 +878,1219 @@
               }
             }
           ]
+        }
+      ]
+    },
+    {
+      "name": "6 · Clientes (work-order-service)",
+      "description": "CRUD completo. Tudo exige role=admin, exceto `/customers/lookup`, que é público porque o auth-service o consome antes de emitir o token do cliente.",
+      "item": [
+        {
+          "name": "Criar cliente",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{adminToken}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/customers",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "customers"
+              ]
+            },
+            "description": "Valida os dígitos do CPF/CNPJ. Documento duplicado retorna 409.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"Maria Silva\",\n  \"document\": \"111.444.777-35\",\n  \"email\": \"maria@example.com\",\n  \"phone\": \"+55 11 99999-9999\"\n}"
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const body = pm.response.json();",
+                  "if (body.id) pm.collectionVariables.set('customerId', body.id);",
+                  "pm.test('status is ok', () => pm.expect(pm.response.code).to.be.oneOf([200, 201]));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Listar clientes",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{adminToken}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/customers?page=1&perPage=20&search=",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "customers"
+              ],
+              "query": [
+                {
+                  "key": "page",
+                  "value": "1"
+                },
+                {
+                  "key": "perPage",
+                  "value": "20"
+                },
+                {
+                  "key": "search",
+                  "value": ""
+                }
+              ]
+            },
+            "description": "Paginado. `search` casa com nome ou documento."
+          }
+        },
+        {
+          "name": "Buscar por documento (público)",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/customers/lookup?document={{document}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "customers",
+                "lookup"
+              ],
+              "query": [
+                {
+                  "key": "document",
+                  "value": "{{document}}"
+                }
+              ]
+            },
+            "description": "Rota pública, consumida pelo auth-service. Retorna apenas o id e o nome."
+          }
+        },
+        {
+          "name": "Obter cliente",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{adminToken}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/customers/{{customerId}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "customers",
+                "{{customerId}}"
+              ]
+            },
+            "description": "404 se o id não existir."
+          }
+        },
+        {
+          "name": "Atualizar cliente",
+          "request": {
+            "method": "PATCH",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{adminToken}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/customers/{{customerId}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "customers",
+                "{{customerId}}"
+              ]
+            },
+            "description": "O documento é imutável: não faz parte do payload de atualização.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"Maria Silva Souza\",\n  \"email\": \"maria.souza@example.com\"\n}"
+            }
+          }
+        },
+        {
+          "name": "Remover cliente",
+          "request": {
+            "method": "DELETE",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{adminToken}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/customers/{{customerId}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "customers",
+                "{{customerId}}"
+              ]
+            },
+            "description": "Soft delete. Falha se houver OS ativa para o cliente."
+          }
+        }
+      ]
+    },
+    {
+      "name": "7 · Veículos (work-order-service)",
+      "description": "Todas as rotas exigem role=admin. A placa é única e imutável.",
+      "item": [
+        {
+          "name": "Criar veículo",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{adminToken}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/vehicles",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "vehicles"
+              ]
+            },
+            "description": "Aceita placa no formato antigo ou Mercosul. Placa duplicada retorna 409.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"customerId\": \"{{customerId}}\",\n  \"plate\": \"DEM2A34\",\n  \"brand\": \"Honda\",\n  \"model\": \"Civic\",\n  \"year\": 2023\n}"
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const body = pm.response.json();",
+                  "if (body.id) pm.collectionVariables.set('vehicleId', body.id);",
+                  "pm.test('status is ok', () => pm.expect(pm.response.code).to.be.oneOf([200, 201]));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Listar veículos",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{adminToken}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/vehicles?page=1&perPage=20&search=&customerId=",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "vehicles"
+              ],
+              "query": [
+                {
+                  "key": "page",
+                  "value": "1"
+                },
+                {
+                  "key": "perPage",
+                  "value": "20"
+                },
+                {
+                  "key": "search",
+                  "value": ""
+                },
+                {
+                  "key": "customerId",
+                  "value": ""
+                }
+              ]
+            },
+            "description": "`search` casa com placa, marca ou modelo; `customerId` filtra por dono."
+          }
+        },
+        {
+          "name": "Obter veículo",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{adminToken}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/vehicles/{{vehicleId}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "vehicles",
+                "{{vehicleId}}"
+              ]
+            },
+            "description": ""
+          }
+        },
+        {
+          "name": "Atualizar veículo",
+          "request": {
+            "method": "PATCH",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{adminToken}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/vehicles/{{vehicleId}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "vehicles",
+                "{{vehicleId}}"
+              ]
+            },
+            "description": "Placa e dono não são atualizáveis.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"brand\": \"Honda\",\n  \"model\": \"Civic Touring\",\n  \"year\": 2024\n}"
+            }
+          }
+        },
+        {
+          "name": "Remover veículo",
+          "request": {
+            "method": "DELETE",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{adminToken}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/vehicles/{{vehicleId}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "vehicles",
+                "{{vehicleId}}"
+              ]
+            },
+            "description": "Soft delete."
+          }
+        }
+      ]
+    },
+    {
+      "name": "8 · Serviços de reparo (work-order-service)",
+      "description": "Catálogo de mão de obra. Todas as rotas exigem role=admin.",
+      "item": [
+        {
+          "name": "Criar serviço",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{adminToken}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/repair-services",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "repair-services"
+              ]
+            },
+            "description": "Preço em centavos: 25000 = R$ 250,00.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"Troca de pastilhas\",\n  \"description\": \"Pastilhas dianteiras e sangria\",\n  \"priceCents\": 25000\n}"
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const body = pm.response.json();",
+                  "if (body.id) pm.collectionVariables.set('serviceId', body.id);",
+                  "pm.test('status is ok', () => pm.expect(pm.response.code).to.be.oneOf([200, 201]));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Listar serviços",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{adminToken}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/repair-services?page=1&perPage=20&search=",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "repair-services"
+              ],
+              "query": [
+                {
+                  "key": "page",
+                  "value": "1"
+                },
+                {
+                  "key": "perPage",
+                  "value": "20"
+                },
+                {
+                  "key": "search",
+                  "value": ""
+                }
+              ]
+            },
+            "description": "`search` casa com o nome do serviço."
+          }
+        },
+        {
+          "name": "Obter serviço",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{adminToken}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/repair-services/{{serviceId}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "repair-services",
+                "{{serviceId}}"
+              ]
+            },
+            "description": ""
+          }
+        },
+        {
+          "name": "Atualizar serviço",
+          "request": {
+            "method": "PATCH",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{adminToken}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/repair-services/{{serviceId}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "repair-services",
+                "{{serviceId}}"
+              ]
+            },
+            "description": "",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"priceCents\": 27000\n}"
+            }
+          }
+        },
+        {
+          "name": "Remover serviço",
+          "request": {
+            "method": "DELETE",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{adminToken}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/repair-services/{{serviceId}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "repair-services",
+                "{{serviceId}}"
+              ]
+            },
+            "description": "Soft delete."
+          }
+        }
+      ]
+    },
+    {
+      "name": "9 · Ordens de serviço (work-order-service)",
+      "description": "O orquestrador da saga. Abrir uma OS dispara a transação distribuída.",
+      "item": [
+        {
+          "name": "Abrir OS",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{adminToken}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/work-orders",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "work-orders"
+              ]
+            },
+            "description": "Busca os preços das peças no execution-service via REST, grava um snapshot e publica work-order.opened.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"customerId\": \"{{customerId}}\",\n  \"vehicleId\": \"{{vehicleId}}\",\n  \"serviceIds\": [\n    \"{{serviceId}}\"\n  ],\n  \"parts\": [\n    {\n      \"partId\": \"{{partId}}\",\n      \"quantity\": 2\n    }\n  ]\n}"
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const body = pm.response.json();",
+                  "if (body.id) pm.collectionVariables.set('workOrderId', body.id);",
+                  "pm.test('status is ok', () => pm.expect(pm.response.code).to.be.oneOf([200, 201]));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Listar OS ativas",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{adminToken}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/work-orders?page=1&perPage=20&status=",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "work-orders"
+              ],
+              "query": [
+                {
+                  "key": "page",
+                  "value": "1"
+                },
+                {
+                  "key": "perPage",
+                  "value": "20"
+                },
+                {
+                  "key": "status",
+                  "value": ""
+                }
+              ]
+            },
+            "description": "Exclui status terminais (FINISHED, CANCELLED, DELIVERED). `status` filtra por um status específico."
+          }
+        },
+        {
+          "name": "Métrica — tempo médio de execução",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{adminToken}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/work-orders/metrics/execution-time",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "work-orders",
+                "metrics",
+                "execution-time"
+              ]
+            },
+            "description": "Média de IN_EXECUTION → FINISHED em segundos, derivada do histórico de status. É o requisito de tempo médio da Fase 4."
+          }
+        },
+        {
+          "name": "Obter OS",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{adminToken}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/work-orders/{{workOrderId}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "work-orders",
+                "{{workOrderId}}"
+              ]
+            },
+            "description": "Admin lê qualquer OS; cliente só lê as próprias — caso contrário 403 vindo do serviço, não do gateway."
+          }
+        },
+        {
+          "name": "Obter OS (como cliente)",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{customerToken}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/work-orders/{{workOrderId}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "work-orders",
+                "{{workOrderId}}"
+              ]
+            },
+            "description": "Mesma rota com o token do cliente. Retorna 403 se a OS for de outro cliente."
+          }
+        }
+      ]
+    },
+    {
+      "name": "10 · Peças e estoque (execution-service)",
+      "description": "Estoque em MongoDB Atlas. `/parts/prices` é pública porque é chamada entre serviços, do work-order-service.",
+      "item": [
+        {
+          "name": "Criar peça",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{adminToken}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/parts",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "parts"
+              ]
+            },
+            "description": "`initialQuantity` entra como quantidade disponível.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"Pastilha de freio\",\n  \"description\": \"Pastilha cerâmica dianteira\",\n  \"priceCents\": 5000,\n  \"initialQuantity\": 100\n}"
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const body = pm.response.json();",
+                  "if (body.id) pm.collectionVariables.set('partId', body.id);",
+                  "pm.test('status is ok', () => pm.expect(pm.response.code).to.be.oneOf([200, 201]));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Preços por ids (público)",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/parts/prices?ids={{partId}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "parts",
+                "prices"
+              ],
+              "query": [
+                {
+                  "key": "ids",
+                  "value": "{{partId}}"
+                }
+              ]
+            },
+            "description": "Rota pública entre serviços: ids separados por vírgula. É como o work-order-service monta o snapshot de preços."
+          }
+        },
+        {
+          "name": "Listar peças",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{adminToken}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/parts?page=1&perPage=20&search=",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "parts"
+              ],
+              "query": [
+                {
+                  "key": "page",
+                  "value": "1"
+                },
+                {
+                  "key": "perPage",
+                  "value": "20"
+                },
+                {
+                  "key": "search",
+                  "value": ""
+                }
+              ]
+            },
+            "description": "`search` casa com o nome da peça."
+          }
+        },
+        {
+          "name": "Obter peça",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{adminToken}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/parts/{{partId}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "parts",
+                "{{partId}}"
+              ]
+            },
+            "description": "Mostra availableQuantity e reservedQuantity — é aqui que se vê a reserva da saga."
+          }
+        },
+        {
+          "name": "Atualizar peça",
+          "request": {
+            "method": "PATCH",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{adminToken}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/parts/{{partId}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "parts",
+                "{{partId}}"
+              ]
+            },
+            "description": "A quantidade não é atualizável por aqui: use restock.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"priceCents\": 5500\n}"
+            }
+          }
+        },
+        {
+          "name": "Repor estoque",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{adminToken}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/parts/{{partId}}/restock",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "parts",
+                "{{partId}}",
+                "restock"
+              ]
+            },
+            "description": "Soma à quantidade disponível.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"quantity\": 50\n}"
+            }
+          }
+        },
+        {
+          "name": "Remover peça",
+          "request": {
+            "method": "DELETE",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{adminToken}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/parts/{{partId}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "parts",
+                "{{partId}}"
+              ]
+            },
+            "description": "Soft delete. Responde 204 sem corpo."
+          }
+        }
+      ]
+    },
+    {
+      "name": "11 · Execuções (execution-service)",
+      "description": "Fila de execução e diagnósticos. Todas as rotas exigem role=admin. `complete` e `fail` publicam no RabbitMQ e movem a saga.",
+      "item": [
+        {
+          "name": "Listar fila de execução",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{adminToken}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/executions?page=1&perPage=20&status=",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "executions"
+              ],
+              "query": [
+                {
+                  "key": "page",
+                  "value": "1"
+                },
+                {
+                  "key": "perPage",
+                  "value": "20"
+                },
+                {
+                  "key": "status",
+                  "value": ""
+                }
+              ]
+            },
+            "description": "`status` aceita os valores do enum ExecutionStatus."
+          }
+        },
+        {
+          "name": "Obter execução",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{adminToken}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/executions/{{workOrderId}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "executions",
+                "{{workOrderId}}"
+              ]
+            },
+            "description": "Traz a execução com todos os diagnósticos registrados."
+          }
+        },
+        {
+          "name": "Registrar diagnóstico",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{adminToken}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/executions/{{workOrderId}}/diagnostics",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "executions",
+                "{{workOrderId}}",
+                "diagnostics"
+              ]
+            },
+            "description": "`details` é documento livre — é a razão de o execution-service usar MongoDB.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"description\": \"Pastilhas dianteiras abaixo de 2mm\",\n  \"details\": {\n    \"severity\": \"high\",\n    \"measurements\": {\n      \"padThicknessMm\": 1.5\n    }\n  }\n}"
+            }
+          }
+        },
+        {
+          "name": "Iniciar reparo",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{adminToken}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/executions/{{workOrderId}}/start-repair",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "executions",
+                "{{workOrderId}}",
+                "start-repair"
+              ]
+            },
+            "description": "Move a execução para a etapa de reparo."
+          }
+        },
+        {
+          "name": "Concluir reparo",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{adminToken}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/executions/{{workOrderId}}/complete",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "executions",
+                "{{workOrderId}}",
+                "complete"
+              ]
+            },
+            "description": "Consome as peças reservadas e publica execution.completed: a OS vai para FINISHED."
+          }
+        },
+        {
+          "name": "Falhar reparo",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{adminToken}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/executions/{{workOrderId}}/fail",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "executions",
+                "{{workOrderId}}",
+                "fail"
+              ]
+            },
+            "description": "Publica execution.failed e dispara a compensação: estorno, cancelamento do orçamento e liberação das peças."
+          }
+        }
+      ]
+    },
+    {
+      "name": "12 · Orçamentos e pagamentos (billing-service)",
+      "description": "Aprovar e rejeitar exigem role=customer — é a decisão do cliente, e o admin recebe 403 mesmo com token válido.",
+      "item": [
+        {
+          "name": "Obter orçamento",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{adminToken}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/quotes/{{workOrderId}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "quotes",
+                "{{workOrderId}}"
+              ]
+            },
+            "description": "Gerado pelo billing-service ao receber work-order.opened."
+          }
+        },
+        {
+          "name": "Aprovar orçamento (cliente)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{customerToken}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/quotes/{{workOrderId}}/approve",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "quotes",
+                "{{workOrderId}}",
+                "approve"
+              ]
+            },
+            "description": "Confirma o pagamento e publica quote.approved: a OS vai para IN_EXECUTION."
+          }
+        },
+        {
+          "name": "Rejeitar orçamento (cliente)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{customerToken}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/quotes/{{workOrderId}}/reject",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "quotes",
+                "{{workOrderId}}",
+                "reject"
+              ]
+            },
+            "description": "Publica quote.rejected: libera as peças reservadas e cancela a OS."
+          }
+        },
+        {
+          "name": "Obter pagamento",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{adminToken}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/payments/{{workOrderId}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "payments",
+                "{{workOrderId}}"
+              ]
+            },
+            "description": "Estado do pagamento no Mercado Pago para a OS."
+          }
+        }
+      ]
+    },
+    {
+      "name": "13 · Saúde (fora do gateway)",
+      "description": "`/health` não é exposto pelo Kong — não existe Ingress para ele, de propósito: é sonda do Kubernetes, não API pública. Para chamar, abra um port-forward:\n\n```sh\nkubectl port-forward -n tech-challenge svc/work-order-service 3000:3000\nkubectl port-forward -n tech-challenge svc/billing-service 3001:3001\nkubectl port-forward -n tech-challenge svc/execution-service 3002:3002\n```\n\nO auth-service não tem /health: é Lambda, e a saúde dela é o próprio retorno de POST /auth.",
+      "item": [
+        {
+          "name": "work-order-service",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{workOrderLocalUrl}}/health",
+              "host": [
+                "{{workOrderLocalUrl}}"
+              ],
+              "path": [
+                "health"
+              ]
+            },
+            "description": "Usado por readinessProbe e livenessProbe."
+          }
+        },
+        {
+          "name": "billing-service",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{billingLocalUrl}}/health",
+              "host": [
+                "{{billingLocalUrl}}"
+              ],
+              "path": [
+                "health"
+              ]
+            },
+            "description": ""
+          }
+        },
+        {
+          "name": "execution-service",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{executionLocalUrl}}/health",
+              "host": [
+                "{{executionLocalUrl}}"
+              ],
+              "path": [
+                "health"
+              ]
+            },
+            "description": ""
+          }
         }
       ]
     }
